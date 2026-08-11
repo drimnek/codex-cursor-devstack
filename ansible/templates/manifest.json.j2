@@ -1,0 +1,17 @@
+{
+  "platform": "{{ platform_version }}",
+  "host": "ubuntu-22.04",
+  "base_source_image": "{{ node_image }}",
+  "images": {
+    "base": "{{ base_image }}",
+    "codex": "{{ codex_image }}",
+    "cursor": "{{ cursor_image }}",
+    "intelligence": "{{ intelligence_image }}"
+  },
+  "tools": {
+    "codex": "{{ codex_version }}",
+    "gitnexus": "{{ gitnexus_version }}",
+    "cursor": "build-time-official-installer"
+  },
+  "git_model": "persistent-agent-clone+integration-branch+temporary-parallel-worktrees"
+}

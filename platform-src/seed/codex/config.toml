@@ -1,0 +1,9 @@
+# Secondary policy layer. The outer Podman mount/container boundary is authoritative.
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+allow_login_shell = false
+
+# Model-generated commands are offline by default. Codex's own API connection is
+# separate from this command sandbox setting.
+[sandbox_workspace_write]
+network_access = false

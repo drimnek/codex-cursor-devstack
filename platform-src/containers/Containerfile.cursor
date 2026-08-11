@@ -1,0 +1,21 @@
+ARG BASE_IMAGE=localhost/agent-dev/base:0.1.0
+FROM ${BASE_IMAGE}
+
+# Cursor's installer creates ~/.local/bin/agent as a symlink to an absolute
+# path under $HOME/.local/share/cursor-agent. Install directly under the final
+# immutable prefix by overriding HOME for the installer instead of relocating
+# ~/.local afterwards (which would leave that absolute symlink broken).
+RUN mkdir -p /opt/cursor-cli \
+    && HOME=/opt/cursor-cli bash -c 'curl https://cursor.com/install -fsS | bash' \
+    && test -L /opt/cursor-cli/.local/bin/agent \
+    && test -x /opt/cursor-cli/.local/bin/agent \
+    && test -x "$(readlink -f /opt/cursor-cli/.local/bin/agent)" \
+    && ln -s /opt/cursor-cli/.local/bin/agent /usr/local/bin/agent \
+    && agent --version \
+    && mkdir -p /usr/local/share/agent-dev \
+    && agent --version > /usr/local/share/agent-dev/cursor-version.txt
+
+ENV PATH="/opt/cursor-cli/.local/bin:${PATH}"
+
+WORKDIR /workspace
+CMD ["agent"]

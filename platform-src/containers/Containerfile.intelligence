@@ -1,0 +1,11 @@
+ARG BASE_IMAGE=localhost/agent-dev/base:0.1.0
+FROM ${BASE_IMAGE}
+
+ARG GITNEXUS_VERSION=1.6.5
+RUN npm install -g "gitnexus@${GITNEXUS_VERSION}" \
+    && gitnexus --version \
+    && mkdir -p /usr/local/share/agent-dev \
+    && gitnexus --version > /usr/local/share/agent-dev/gitnexus-version.txt
+
+WORKDIR /workspace
+CMD ["gitnexus"]

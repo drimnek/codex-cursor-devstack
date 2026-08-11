@@ -1,0 +1,26 @@
+[Unit]
+Description=Agent Development Runtime Broker
+Requires=agentd.socket
+After=network.target
+
+[Service]
+Type=simple
+User={{ agent_user }}
+Group={{ agent_group }}
+Environment=HOME={{ agent_home }}
+Environment=XDG_RUNTIME_DIR=/run/user/{{ agent_uid.stdout }}
+WorkingDirectory={{ agent_home }}
+ExecStart=/usr/bin/python3 {{ platform_root }}/platform/bin/agentd
+Restart=on-failure
+RestartSec=2s
+PrivateTmp=yes
+ProtectSystem=strict
+InaccessiblePaths=/home /root
+ReadWritePaths={{ platform_root }}/state {{ platform_root }}/projects {{ platform_root }}/tmp /run/user/{{ agent_uid.stdout }}
+LockPersonality=yes
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

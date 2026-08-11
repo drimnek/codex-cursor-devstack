@@ -1,0 +1,11 @@
+ARG BASE_IMAGE=localhost/agent-dev/base:0.1.0
+FROM ${BASE_IMAGE}
+
+ARG CODEX_VERSION=0.147.0
+RUN npm install -g "@openai/codex@${CODEX_VERSION}" \
+    && codex --version \
+    && mkdir -p /usr/local/share/agent-dev \
+    && codex --version > /usr/local/share/agent-dev/codex-version.txt
+
+WORKDIR /workspace
+CMD ["codex"]

@@ -1,0 +1,17 @@
+ARG NODE_IMAGE=docker.io/library/node:22-bookworm-slim
+FROM ${NODE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       bash ca-certificates curl git jq less make g++ python3 procps ripgrep \
+       bubblewrap \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+# The official Node image ships docker-entrypoint.sh, which prepends `node`
+# when the requested command is not found. This is a generic CLI executor
+# image, so clear that inherited entrypoint to surface command/path failures
+# directly instead of turning them into misleading Node module errors.
+ENTRYPOINT []
+CMD ["bash"]

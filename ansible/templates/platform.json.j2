@@ -1,0 +1,25 @@
+{
+  "root": "{{ platform_root }}",
+  "agent_user": "{{ agent_user }}",
+  "agent_group": "{{ agent_group }}",
+  "ops_group": "{{ ops_group }}",
+  "agent_home": "{{ agent_home }}",
+  "state_dir": "{{ platform_root }}/state/runtime",
+  "socket": "{{ agent_socket }}",
+  "images": {
+    "base": "{{ base_image }}",
+    "codex": "{{ codex_image }}",
+    "cursor": "{{ cursor_image }}",
+    "intelligence": "{{ intelligence_image }}"
+  },
+  "versions": {
+    "platform": "{{ platform_version }}",
+    "codex": "{{ codex_version }}",
+    "gitnexus": "{{ gitnexus_version }}"
+  },
+  "limits": {
+    "cpus": {{ container_cpus }},
+    "memory": "{{ container_memory }}",
+    "pids": {{ container_pids }}
+  }
+}

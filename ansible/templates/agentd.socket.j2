@@ -1,0 +1,13 @@
+[Unit]
+Description=Agent Development Broker Socket
+
+[Socket]
+ListenStream={{ agent_socket }}
+SocketUser={{ agent_user }}
+SocketGroup={{ ops_group }}
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

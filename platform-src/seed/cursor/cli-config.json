@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "editor": {
+    "vimMode": false
+  },
+  "approvalMode": "allowlist",
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Write(**)",
+      "Shell(git)",
+      "Shell(task)",
+      "Shell(make)",
+      "Shell(npm)",
+      "Shell(pnpm)",
+      "Shell(pytest)",
+      "Shell(python)",
+      "Shell(python3)"
+    ],
+    "deny": [
+      "Read(.env*)",
+      "Read(**/.env*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Write(.git/**)",
+      "Shell(sudo)",
+      "Shell(su)",
+      "Shell(ssh)",
+      "Shell(scp)",
+      "Shell(podman)",
+      "Shell(docker)"
+    ]
+  }
+}

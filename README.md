@@ -1,0 +1,366 @@
+# Codex + Cursor Development Stack
+
+A Linux development stack for Cursor CLI and Codex CLI agents with constrained host access to reduce unintended system impact.
+
+Current repository version: **0.1.0 (pre-pilot)**. The deployment is intentionally limited to **Ubuntu 22.04** and uses rootless Podman as the outer execution boundary.
+
+## Goals
+
+- keep the human workstation account, SSH keys, cloud credentials, and canonical project checkout outside agent mounts;
+- run Codex CLI and Cursor CLI through one constrained broker instead of exposing a raw Podman socket;
+- keep normal operation non-root after the initial host bootstrap;
+- support sequential requirement implementation on one integration branch;
+- create Git worktrees only when requirements are intentionally executed in parallel;
+- preserve an explicit human-controlled promotion step before changes reach the canonical project branch.
+
+This is a **constrained-access development environment**, not a VM-grade security boundary. Codex and Cursor currently share the same host-level `agentdev` trust domain.
+
+## Architecture
+
+```text
+human operator (agentdev-ops)
+        |
+      agentctl
+        |
+        | constrained JSON/PTY RPC
+        v
+/run/agent-dev/agentd.sock
+        |
+      agentd                   UID=agentdev
+        |
+  rootless Podman
+      /        \
+ Codex CLI   Cursor CLI
+```
+
+The raw Podman API/socket is not exposed to the operator or agent containers. `agentd` accepts a fixed RPC surface and computes allowed images, workspaces, policy mounts, and provider state itself.
+
+## Trust boundary for Git
+
+Each project has two persistent checkouts:
+
+```text
+repo/main                      human-controlled
+    |
+    | committed history transferred as Git bundle
+    v
+repo/agent                     agent-controlled after initialization
+    |
+    +-- agent/integration
+    +-- temporary worktrees only for parallel requirements
+```
+
+`repo/agent` is created once with `git clone --no-local`, preventing local Git-object hardlinks to `repo/main`.
+
+After write access to `repo/agent` is handed to `agentdev`, **human-side `agentctl` never executes Git inside that repository again**. Git lifecycle operations are executed by `agentd` as `agentdev`. History crosses the trust boundary as Git bundle files rather than by opening the other side's `.git` directory.
+
+## Directory layout
+
+```text
+/srv/agent-dev/
+├── platform/                         root-owned deployed platform
+│   ├── bin/                          agentctl, agentd
+│   ├── containers/
+│   ├── seed/                         read-only provider policies
+│   └── config/                       platform + expected manifest
+│
+├── state/
+│   ├── home/agentdev/                rootless Podman HOME/storage
+│   └── runtime/                      build-manifest.lock.json
+│
+├── projects/
+│   └── <project>/
+│       ├── project.json
+│       ├── repo/
+│       │   ├── main/                 HUMAN ONLY
+│       │   └── agent/                AGENT CONTROLLED
+│       ├── worktrees/                normally empty
+│       ├── tasks/                    lifecycle/requirement metadata
+│       ├── exchange/
+│       │   ├── inbound/              human -> agent Git bundles
+│       │   └── outbound/             agent -> human Git bundles
+│       ├── reference/                executor read-only material
+│       ├── results/
+│       └── runtime/                  broker locks
+│
+├── backups/
+└── tmp/
+```
+
+Provider authentication/session state is stored in separate rootless Podman volumes:
+
+```text
+agent-dev-codex-home
+agent-dev-cursor-home
+```
+
+The authoritative Codex and Cursor policy files are deployed under `/srv/agent-dev/platform/seed` and bind-mounted read-only over the mutable provider homes.
+
+## Installation
+
+The bootstrap script is the single installation entrypoint. A fresh supported Ubuntu host does not need Ansible preinstalled.
+
+Optionally validate the deployment without applying the platform playbook:
+
+```bash
+./bootstrap.sh --check
+```
+
+This validates the supported OS, operator identity, and deployment source tree, installs the minimal bootstrap dependency (`ansible-core`, or `ansible` as a fallback) if it is missing, and always runs `ansible-playbook --syntax-check`. It may therefore install bootstrap packages, but it does not apply the platform playbook.
+
+Deploy from the repository/package root:
+
+```bash
+./bootstrap.sh
+```
+
+The normal bootstrap performs the same preflight, ensures Ansible is available from the Ubuntu repositories, runs the Ansible syntax check, and only then starts the host-changing playbook. The playbook installs rootless Podman prerequisites, creates `agentdev` and `agentdev-ops`, configures subordinate UID/GID ranges, deploys the platform, and enables the systemd socket/broker.
+
+The playbook also configures the rootless Podman environment for `agentdev`:
+
+- Podman events use the `file` backend rather than journald, keeping successful `agentctl` commands free of misleading journald event errors;
+- the `agentdev` systemd user manager receives the cgroup controllers required by executor resource limits;
+- bootstrap verifies that rootless Podman uses cgroup v2 with the systemd cgroup manager and can see the required `cpu`, `memory`, and `pids` controllers.
+
+Bootstrap fails if these runtime prerequisites are not effective, even if `podman info` itself can otherwise run successfully.
+
+Commands executed as the restricted `agentdev` identity must use an agent-accessible working directory and must not inherit the operator's repository working directory. Bootstrap validation and the deployed broker use `agent_home` for this purpose. The source repository may therefore be located on a user-owned or removable filesystem that `agentdev` cannot traverse; deployment does not require granting the agent identity access to the checkout.
+
+The bootstrap uses elevated privileges only for package installation and host-level configuration. When invoked from an operator account it uses `sudo` internally; when invoked through `sudo`, it preserves the original operator identity for `agentdev-ops` membership. Direct root invocation requires an explicit non-root `CONTROLLER_USER`.
+
+Log out and back in once after the first bootstrap so the operator receives the `agentdev-ops` supplementary group.
+
+Then validate the broker:
+
+```bash
+agentctl ping
+```
+
+## Build and validate the runtime
+
+```bash
+agentctl ping
+agentctl build
+agentctl versions
+agentctl smoke
+agentctl status
+```
+
+`agentctl versions` must complete without Podman, OCI runtime, or provider-launcher errors. `agentctl smoke` is intentionally quiet on success and returns exit status `0`. Before provider authentication, `agentctl status` may report an unauthenticated provider state, but it must not fail because of container runtime or cgroup errors.
+
+A successful build writes the observed executor image IDs and CLI versions to:
+
+```text
+/srv/agent-dev/state/runtime/build-manifest.lock.json
+```
+
+GitNexus is an **optional** intelligence image. A GitNexus image build failure does not invalidate the Codex/Cursor core images.
+
+## Authenticate providers
+
+After runtime validation succeeds, authenticate the provider CLIs:
+
+```bash
+agentctl auth codex
+agentctl auth cursor
+agentctl status
+```
+
+Provider authentication/session state is stored in the provider-specific mutable volumes described above. Authentication is a separate validation stage from host/runtime isolation.
+
+## Import a project
+
+```bash
+agentctl project-import question-manager ~/projects/question-manager
+```
+
+This creates the localized human checkout and the one persistent agent checkout. There is no clone-per-requirement model.
+
+Alternatively:
+
+```bash
+agentctl project-create question-manager
+# populate /srv/agent-dev/projects/question-manager/repo/main
+agentctl project-init question-manager
+```
+
+`project-init` is the one-time handoff point. Before handoff, `agentctl` may initialize the agent clone. After handoff, Git operations in `repo/agent` are broker-owned.
+
+## Sync committed human changes into the agent integration branch
+
+```bash
+agentctl project-sync question-manager
+```
+
+The human side creates an inbound Git bundle from the configured main branch. `agentd` verifies/fetches it and only fast-forwards `agent/integration` when the histories are compatible. Sync is rejected while tasks are active or parallel results await integration.
+
+A divergent history is not auto-rebased or auto-merged.
+
+## Sequential dependent requirements
+
+Dependent requirements normally execute on the shared integration branch:
+
+```bash
+agentctl task-start question-manager REQ-001
+agentctl run cursor question-manager REQ-001 \
+  "Implement REQ-001 using the project TDD workflow and commit the completed change."
+agentctl run codex question-manager REQ-001 --readonly \
+  "Review REQ-001 against the requirement and tests."
+agentctl task-complete question-manager REQ-001
+
+agentctl task-start question-manager REQ-002 --depends-on REQ-001
+```
+
+The task boundary is represented by requirement IDs, task metadata, tests, and commits rather than by a branch for every sequential requirement.
+
+## Parallel independent requirements
+
+Create temporary branches/worktrees only for requirements that are intentionally parallelized:
+
+```bash
+agentctl task-start question-manager REQ-010 --parallel --depends-on REQ-009
+agentctl task-start question-manager REQ-011 --parallel --depends-on REQ-009
+
+agentctl run cursor question-manager REQ-010 "Implement and commit REQ-010."
+agentctl run codex  question-manager REQ-011 "Implement and commit REQ-011."
+
+agentctl task-complete question-manager REQ-010
+agentctl task-complete question-manager REQ-011
+
+agentctl task-merge question-manager REQ-010
+agentctl task-merge question-manager REQ-011
+```
+
+A completed parallel task does **not** satisfy downstream dependencies until it is merged. Before merge, the broker verifies that the task branch/worktree still points at the recorded `head_commit`, then merges that exact commit SHA. Conflicts abort the automated merge.
+
+Discard an unmerged parallel task with:
+
+```bash
+agentctl task-abort question-manager REQ-011
+```
+
+Sequential integration history is not automatically reset/reverted by the broker.
+
+## Project status and task metadata
+
+```bash
+agentctl project-status question-manager
+agentctl task-list question-manager
+```
+
+Git status for the agent repository is produced by `agentd`, not by the human controller.
+
+## Optional GitNexus indexing
+
+If the optional intelligence image built successfully:
+
+```bash
+agentctl index question-manager REQ-010
+```
+
+Failure or absence of the intelligence image does not block normal Codex/Cursor execution.
+
+## Export agent history for human review/promotion
+
+Create an outbound bundle:
+
+```bash
+agentctl project-export question-manager
+```
+
+The command returns a bundle path under:
+
+```text
+/srv/agent-dev/projects/question-manager/exchange/outbound/
+```
+
+The human can fetch that bundle into a review ref in `repo/main`, inspect it with normal Git/mcode tooling, run final checks, and then merge/cherry-pick according to project policy. The bundle carries Git objects/refs, not the agent repository's hooks or local `.git/config`.
+
+## Provider policy model
+
+The outer Podman boundary is authoritative. Provider permissions/sandboxes are defense-in-depth guardrails.
+
+Codex policy defaults to `workspace-write`, `on-request`, and no model-generated command network inside the Codex workspace sandbox. Cursor uses an explicit global CLI configuration with required schema fields and allowlist mode. Provider policy files are mounted read-only; auth/session state remains writable in provider-specific volumes.
+
+## Validation
+
+Run the repository checks first:
+
+```bash
+./tests/package-check.sh
+```
+
+On the target Ubuntu host, deployment validation can be run without applying the platform playbook:
+
+```bash
+./bootstrap.sh --check
+```
+
+The check path is self-contained: it installs the Ansible bootstrap dependency if needed and always validates the playbook syntax. The normal `./bootstrap.sh` uses the same dependency/bootstrap and validation path, then applies the playbook only after validation succeeds. Users do not need to install or invoke Ansible manually.
+
+They cover:
+
+- Python/Bash/JSON syntax;
+- no-local Git clone model;
+- Git bundle synchronization;
+- sequential + parallel Git behavior;
+- no human-side Git access to `repo/agent` after handoff;
+- strict RPC field rejection;
+- symlink mount-source and project-subroot rejection;
+- parallel dependency integration semantics;
+- rejection when a parallel branch moves after `task-complete`.
+
+The first real Ubuntu deployment must additionally validate:
+
+```bash
+agentctl ping
+agentctl build
+agentctl versions
+agentctl smoke
+agentctl status
+```
+
+A successful runtime deployment requires:
+
+- rootless Podman event logging to use the `file` backend;
+- cgroup v2 with the systemd cgroup manager;
+- `cpu`, `memory`, and `pids` controllers to be visible to rootless Podman;
+- executor version probes to complete without Podman or OCI runtime errors;
+- `agentctl smoke` to return exit status `0`.
+
+Provider authentication is validated separately:
+
+```bash
+agentctl auth codex
+agentctl auth cursor
+agentctl status
+```
+
+The first real deployment should also verify the nested Codex sandbox behavior under the chosen Podman profile.
+
+## Current limitations
+
+- Ubuntu 22.04 only.
+- Codex and Cursor share one host-level `agentdev` trust domain.
+- Projects also share that host agent identity; container mounts provide normal project visibility separation, not separate project UIDs.
+- No automatic provider/quota router.
+- No arbitrary Docker/Podman socket access from agent containers.
+- No automatic conflict resolution or promotion to the human main branch.
+- GitNexus is optional and not injected as an MCP dependency into the core executor images.
+- Cursor CLI installation is frozen at image build time but is not yet pinned by a vendor-provided immutable installer artifact in this stack.
+
+## Scope discipline
+
+Before the first pilot, this repository should remain small: host bootstrap, brokered execution, Git/task lifecycle, provider policy, and regression checks. It should not grow into a generic scheduler, CI system, backlog manager, or arbitrary container orchestrator without evidence from real project usage.
+
+### Cursor image installation layout
+
+The Cursor installer creates the CLI installation tree under `$HOME/.local`, and the `agent` launcher may reference other files in that tree using paths tied to the installation HOME.
+
+The Cursor executor therefore runs the installer with `HOME=/opt/cursor-cli` from the start, producing the final immutable installation directly under:
+
+```text
+/opt/cursor-cli/.local/
+```
+
+`/usr/local/bin/agent` points to the launcher in that installation. Do not install Cursor under `/root/.local` and relocate the resulting tree afterward, and do not replace the installation with a single copied launcher file. Either approach can break installer-created links or companion-file lookups.

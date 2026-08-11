@@ -1,0 +1,378 @@
+---
+- name: Build local dual-agent development platform
+  hosts: local
+  become: true
+  gather_facts: true
+
+  vars:
+    platform_root: /srv/agent-dev
+    agent_user: agentdev
+    agent_group: agentdev
+    ops_group: agentdev-ops
+    agent_home: "{{ platform_root }}/state/home/{{ agent_user }}"
+    agent_socket: /run/agent-dev/agentd.sock
+    subid_start: 200000
+    subid_count: 65536
+    platform_version: "0.1.0"
+    codex_version: "0.147.0"
+    gitnexus_version: "1.6.5"
+    node_image: "docker.io/library/node:22-bookworm-slim"
+    base_image: "localhost/agent-dev/base:0.1.0"
+    codex_image: "localhost/agent-dev/codex:0.1.0"
+    cursor_image: "localhost/agent-dev/cursor:0.1.0"
+    intelligence_image: "localhost/agent-dev/intelligence:0.1.0"
+    container_cpus: 4
+    container_memory: "8g"
+    container_pids: 1024
+
+  pre_tasks:
+    - name: Validate Ubuntu 22.04
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == 'Ubuntu'
+          - ansible_distribution_version is version('22.04', '==')
+        fail_msg: "This playbook is intentionally limited to Ubuntu 22.04."
+
+    - name: Validate controller user
+      ansible.builtin.command: "getent passwd {{ controller_user }}"
+      changed_when: false
+
+  tasks:
+    - name: Install host dependencies
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+        state: present
+        name:
+          - podman
+          - uidmap
+          - fuse-overlayfs
+          - slirp4netns
+          - dbus-user-session
+          - git
+          - curl
+          - jq
+          - rsync
+          - ca-certificates
+          - python3
+          - acl
+
+    - name: Create platform root
+      ansible.builtin.file:
+        path: "{{ platform_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Create dedicated agent group
+      ansible.builtin.group:
+        name: "{{ agent_group }}"
+        state: present
+
+    - name: Create operator group
+      ansible.builtin.group:
+        name: "{{ ops_group }}"
+        state: present
+
+    - name: Create state home parent
+      ansible.builtin.file:
+        path: "{{ platform_root }}/state/home"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Create dedicated locked agent user
+      ansible.builtin.user:
+        name: "{{ agent_user }}"
+        group: "{{ agent_group }}"
+        home: "{{ agent_home }}"
+        create_home: true
+        shell: /bin/bash
+        password: '!'
+        state: present
+
+    - name: Ensure agent user is not an operator
+      ansible.builtin.command: "gpasswd -d {{ agent_user }} {{ ops_group }}"
+      register: remove_agent_from_ops
+      changed_when: "'Removing user' in (remove_agent_from_ops.stdout | default(''))"
+      failed_when: false
+
+    - name: Add controller to operator group
+      ansible.builtin.user:
+        name: "{{ controller_user }}"
+        groups: "{{ ops_group }}"
+        append: true
+
+    - name: Read current subuid entry
+      ansible.builtin.shell: "grep -E '^{{ agent_user }}:' /etc/subuid || true"
+      register: current_subuid
+      changed_when: false
+
+    - name: Check requested subuid range is unused
+      ansible.builtin.shell: |
+        awk -F: -v s={{ subid_start }} -v c={{ subid_count }} -v u={{ agent_user | quote }} '
+          $1 != u { e=$2+$3-1; d=s+c-1; if (s <= e && d >= $2) exit 1 }
+        ' /etc/subuid
+      register: subuid_overlap
+      changed_when: false
+      failed_when: false
+      when: current_subuid.stdout | length == 0
+
+    - name: Fail on subuid collision
+      ansible.builtin.fail:
+        msg: "Default subuid range {{ subid_start }}:{{ subid_count }} overlaps an existing allocation. Change subid_start."
+      when:
+        - current_subuid.stdout | length == 0
+        - subuid_overlap.rc != 0
+
+    - name: Allocate subuids
+      ansible.builtin.lineinfile:
+        path: /etc/subuid
+        line: "{{ agent_user }}:{{ subid_start }}:{{ subid_count }}"
+        create: true
+      when: current_subuid.stdout | length == 0
+
+    - name: Read current subgid entry
+      ansible.builtin.shell: "grep -E '^{{ agent_user }}:' /etc/subgid || true"
+      register: current_subgid
+      changed_when: false
+
+    - name: Check requested subgid range is unused
+      ansible.builtin.shell: |
+        awk -F: -v s={{ subid_start }} -v c={{ subid_count }} -v u={{ agent_user | quote }} '
+          $1 != u { e=$2+$3-1; d=s+c-1; if (s <= e && d >= $2) exit 1 }
+        ' /etc/subgid
+      register: subgid_overlap
+      changed_when: false
+      failed_when: false
+      when: current_subgid.stdout | length == 0
+
+    - name: Fail on subgid collision
+      ansible.builtin.fail:
+        msg: "Default subgid range {{ subid_start }}:{{ subid_count }} overlaps an existing allocation. Change subid_start."
+      when:
+        - current_subgid.stdout | length == 0
+        - subgid_overlap.rc != 0
+
+    - name: Allocate subgids
+      ansible.builtin.lineinfile:
+        path: /etc/subgid
+        line: "{{ agent_user }}:{{ subid_start }}:{{ subid_count }}"
+        create: true
+      when: current_subgid.stdout | length == 0
+
+    - name: Enable lingering for rootless runtime identity
+      ansible.builtin.command: "loginctl enable-linger {{ agent_user }}"
+      changed_when: false
+
+    - name: Create top-level platform directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ platform_root }}/platform", owner: root, group: root, mode: '0755' }
+        - { path: "{{ platform_root }}/projects", owner: root, group: "{{ ops_group }}", mode: '2770' }
+        - { path: "{{ platform_root }}/state", owner: root, group: root, mode: '0755' }
+        - { path: "{{ platform_root }}/state/runtime", owner: "{{ agent_user }}", group: "{{ agent_group }}", mode: '0700' }
+        - { path: "{{ platform_root }}/backups", owner: root, group: "{{ ops_group }}", mode: '2750' }
+        - { path: "{{ platform_root }}/tmp", owner: "{{ agent_user }}", group: "{{ agent_group }}", mode: '0700' }
+
+    - name: Allow agent identity to traverse the projects namespace without listing it
+      ansible.builtin.command: "setfacl -m u:{{ agent_user }}:x {{ platform_root }}/projects"
+      changed_when: false
+
+    - name: Ensure localized agent home ownership
+      ansible.builtin.file:
+        path: "{{ agent_home }}"
+        state: directory
+        owner: "{{ agent_user }}"
+        group: "{{ agent_group }}"
+        mode: '0700'
+
+    - name: Create rootless Podman configuration directory
+      ansible.builtin.file:
+        path: "{{ agent_home }}/.config/containers"
+        state: directory
+        owner: "{{ agent_user }}"
+        group: "{{ agent_group }}"
+        mode: '0700'
+
+    - name: Configure rootless Podman event logging
+      ansible.builtin.copy:
+        dest: "{{ agent_home }}/.config/containers/containers.conf"
+        content: |
+          [engine]
+          events_logger = "file"
+        owner: "{{ agent_user }}"
+        group: "{{ agent_group }}"
+        mode: '0600'
+
+    - name: Install platform source tree
+      ansible.builtin.copy:
+        src: "{{ bootstrap_source }}/"
+        dest: "{{ platform_root }}/platform/"
+        owner: root
+        group: root
+        mode: preserve
+        directory_mode: '0755'
+
+    - name: Render platform configuration
+      ansible.builtin.template:
+        src: platform.json.j2
+        dest: "{{ platform_root }}/platform/config/platform.json"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Render version manifest
+      ansible.builtin.template:
+        src: manifest.json.j2
+        dest: "{{ platform_root }}/platform/config/manifest.json"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Install executables
+      ansible.builtin.file:
+        path: "{{ platform_root }}/platform/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - agentctl
+        - agentd
+
+    - name: Install agentctl symlink
+      ansible.builtin.file:
+        src: "{{ platform_root }}/platform/bin/agentctl"
+        dest: /usr/local/bin/agentctl
+        state: link
+        force: true
+
+    - name: Get agent user UID
+      ansible.builtin.command: "id -u {{ agent_user }}"
+      register: agent_uid
+      changed_when: false
+
+    - name: Create agent user systemd override directory
+      ansible.builtin.file:
+        path: "/etc/systemd/system/user@{{ agent_uid.stdout }}.service.d"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Delegate cgroup controllers required by rootless Podman
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/user@{{ agent_uid.stdout }}.service.d/delegate.conf"
+        content: |
+          [Service]
+          Delegate=cpu cpuset memory pids
+        owner: root
+        group: root
+        mode: '0644'
+      register: agent_user_cgroup_delegation
+      notify: Reload systemd
+
+    - name: Flush user manager delegation changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Restart agent user manager after delegation change
+      ansible.builtin.systemd:
+        name: "user@{{ agent_uid.stdout }}.service"
+        state: restarted
+      when: agent_user_cgroup_delegation.changed
+
+    - name: Render agentd socket unit
+      ansible.builtin.template:
+        src: agentd.socket.j2
+        dest: /etc/systemd/system/agentd.socket
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload systemd
+
+    - name: Render agentd service unit
+      ansible.builtin.template:
+        src: agentd.service.j2
+        dest: /etc/systemd/system/agentd.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload systemd
+
+    - name: Flush systemd unit changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start agentd socket
+      ansible.builtin.systemd:
+        name: agentd.socket
+        enabled: true
+        state: started
+
+    - name: Stop an already-running broker so updated code is picked up on next socket activation
+      ansible.builtin.systemd:
+        name: agentd.service
+        state: stopped
+      failed_when: false
+
+    - name: Wait for rootless user runtime directory
+      ansible.builtin.wait_for:
+        path: "/run/user/{{ agent_uid.stdout }}"
+        state: present
+        timeout: 10
+
+    - name: Validate rootless Podman as agent identity
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - -u
+          - "{{ agent_user }}"
+          - --
+          - env
+          - "HOME={{ agent_home }}"
+          - "XDG_RUNTIME_DIR=/run/user/{{ agent_uid.stdout }}"
+          - podman
+          - info
+          - --format
+          - json
+        chdir: "{{ agent_home }}"
+      register: podman_info
+      changed_when: false
+
+    - name: Validate rootless Podman event logger
+      ansible.builtin.assert:
+        that:
+          - (podman_info.stdout | from_json).host.eventLogger == 'file'
+        fail_msg: "Rootless Podman for {{ agent_user }} must use the file event logger."
+
+    - name: Validate rootless Podman cgroup support
+      ansible.builtin.assert:
+        that:
+          - (podman_info.stdout | from_json).host.cgroupVersion == 'v2'
+          - (podman_info.stdout | from_json).host.cgroupManager == 'systemd'
+          - "'cpu' in ((podman_info.stdout | from_json).host.cgroupControllers | default([]))"
+          - "'memory' in ((podman_info.stdout | from_json).host.cgroupControllers | default([]))"
+          - "'pids' in ((podman_info.stdout | from_json).host.cgroupControllers | default([]))"
+        fail_msg: >-
+          Rootless Podman for {{ agent_user }} must use systemd cgroup v2 and expose
+          cpu, memory, and pids controllers. Actual manager={{ (podman_info.stdout | from_json).host.cgroupManager | default('unknown') }},
+          version={{ (podman_info.stdout | from_json).host.cgroupVersion | default('unknown') }},
+          controllers={{ (podman_info.stdout | from_json).host.cgroupControllers | default([]) }}.
+
+    - name: Print next steps
+      ansible.builtin.debug:
+        msg:
+          - "Platform {{ platform_version }} installed under {{ platform_root }}."
+          - "Log out/in once so {{ controller_user }} receives the {{ ops_group }} supplementary group."
+          - "Normal workflow uses no sudo: agentctl ping; agentctl build; agentctl auth codex; agentctl auth cursor; agentctl smoke."
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true

@@ -1,0 +1,29 @@
+# Python generated files
+__pycache__/
+*.py[cod]
+
+# Local Python environments and tool caches
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environment/secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Ansible/local tooling artifacts
+*.retry
+ansible/inventory.local.ini
+
+# Editor/OS artifacts
+*.swp
+*~
+.DS_Store
+
+# Locally built release packages
+/*.tar.gz
+/*.tar.gz.sha256
