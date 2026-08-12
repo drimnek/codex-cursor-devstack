@@ -266,8 +266,14 @@ def provider_volume(provider: str) -> str:
     return f"agent-dev-{provider}-home"
 
 
+def provider_seed_dir(cfg: dict, provider: str) -> Path:
+    root = Path(cfg["root"])
+    seed_root = canonical_dir(root / "platform" / "seed", root / "platform", "provider seed root")
+    return canonical_dir(seed_root / provider, seed_root, f"{provider} policy directory")
+
+
 def seed_provider_home(cfg: dict, provider: str) -> None:
-    """Create mutable provider state directories without copying policy into them."""
+    """Create mutable provider state and materialize provider-specific initial state."""
     if provider not in ALLOWED_PROVIDERS:
         raise ValueError("unsupported provider")
     vol = provider_volume(provider)
@@ -276,20 +282,32 @@ def seed_provider_home(cfg: dict, provider: str) -> None:
     state_dir = ".codex" if provider == "codex" else ".cursor"
     argv = [
         "podman", "run", "--rm", "--network=none", "-v", f"{vol}:/state:rw",
-        image, "bash", "-lc", f"mkdir -p /state/{state_dir}",
     ]
+    if provider == "cursor":
+        seed = provider_seed_dir(cfg, provider)
+        config = canonical_file(seed / "cli-config.json", seed, "Cursor policy")
+        argv += ["-v", f"{config}:/seed/cli-config.json:ro"]
+        script = (
+            "set -eu; "
+            "mkdir -p /state/.cursor; "
+            "if [ ! -e /state/.cursor/cli-config.json ]; then "
+            "install -m 0600 /seed/cli-config.json /state/.cursor/cli-config.json; "
+            "fi"
+        )
+    else:
+        script = f"mkdir -p /state/{state_dir}"
+    argv += [image, "bash", "-lc", script]
     subprocess.run(argv, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def provider_policy_mounts(cfg: dict, provider: str) -> list[str]:
-    root = Path(cfg["root"])
-    seed_root = canonical_dir(root / "platform" / "seed", root / "platform", "provider seed root")
-    seed = canonical_dir(seed_root / provider, seed_root, f"{provider} policy directory")
-    if provider == "codex":
-        config = canonical_file(seed / "config.toml", seed, "Codex policy")
-        return ["-v", f"{config}:/root/.codex/config.toml:ro"]
-    config = canonical_file(seed / "cli-config.json", seed, "Cursor policy")
-    return ["-v", f"{config}:/root/.cursor/cli-config.json:ro"]
+    # Codex policy is immutable at runtime. Cursor's CLI rewrites cli-config.json
+    # atomically, so its active config must live writable in the provider volume.
+    if provider == "cursor":
+        return []
+    seed = provider_seed_dir(cfg, provider)
+    config = canonical_file(seed / "config.toml", seed, "Codex policy")
+    return ["-v", f"{config}:/root/.codex/config.toml:ro"]
 
 def common_runtime_args(cfg: dict, provider: str | None, workspace: Path | None = None, *, readonly=False, reference: Path | None = None, task_meta: Path | None = None, git_common: Path | None = None) -> list[str]:
     platform_root = Path(cfg["root"])
@@ -871,7 +889,9 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
         if prompt.strip():
             agent_args.append(prompt)
     else:
-        agent_args = ["agent"]
+        # The broker has already validated and mounted this task workspace.
+        # Cursor headless execution must not stop for a second trust prompt.
+        agent_args = ["agent", "--trust"]
         if prompt.strip():
             agent_args.append(prompt)
     argv = [*runtime, image, *agent_args]
