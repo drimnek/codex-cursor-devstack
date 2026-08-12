@@ -911,8 +911,6 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
         raise ValueError("prompt must be a string <= 100000 characters")
     if outer_only and provider != "codex":
         raise ValueError("outer-only mode is Codex-only")
-    if outer_only and readonly:
-        raise ValueError("outer-only and readonly are mutually exclusive")
     rec, pp, ws = load_task(cfg, project, task)
     if not readonly and rec.get("status") != "active":
         raise ValueError("write execution is allowed only while task status is active")
@@ -923,12 +921,12 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
     runtime += ["-e", f"AGENT_TASK_ID={task}", "-e", f"AGENT_TASK_MODE={rec['mode']}", "-e", f"AGENT_TASK_BASE_COMMIT={rec['base_commit']}"]
     image = cfg["images"][provider]
     if provider == "codex":
-        if readonly:
-            agent_args = ["codex", "--sandbox", "read-only", "--ask-for-approval", "on-request"]
-        elif outer_only:
-            agent_args = ["codex", "--sandbox", "danger-full-access", "--ask-for-approval", "on-request"]
+        if outer_only:
+            agent_args = ["codex", "exec", "--sandbox", "danger-full-access", "-c", "approval_policy=never"]
+        elif readonly:
+            agent_args = ["codex", "exec", "--sandbox", "read-only", "-c", "approval_policy=never"]
         else:
-            agent_args = ["codex", "--sandbox", "workspace-write", "--ask-for-approval", "on-request"]
+            agent_args = ["codex", "exec", "--sandbox", "workspace-write", "-c", "approval_policy=never"]
         if prompt.strip():
             agent_args.append(prompt)
     else:
