@@ -46,8 +46,6 @@ def test_human_controller_does_not_open_agent_git() -> None:
     tree = ast.parse(source)
     violations = []
     for fn in [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
-        if fn.name == "cmd_project_init":
-            continue  # Handoff has not occurred until this function grants agentdev access.
         for node in ast.walk(fn):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
                 continue
@@ -62,8 +60,10 @@ def test_human_controller_does_not_open_agent_git() -> None:
                 and first.slice.value == "agent"
             ):
                 violations.append((fn.name, node.lineno, node.func.id))
-    assert not violations, f"human-side Git access to repo/agent after handoff: {violations}"
-    assert '"clone", "--no-local"' in source, "project-init must use a non-local clone without hardlinks"
+    assert not violations, f"human-side Git access to repo/agent: {violations}"
+    assert '"op": "project-init"' in source, "project-init must hand repository creation to agentd"
+    assert "grant_agent_rw" not in source, "agent repository must not rely on ACL-only ownership handoff"
+    assert '0o3770' in source and 'f"u:{agent}:-wx"' in source, "repo namespace must use sticky split-ownership handoff permissions"
 
 
 def test_rpc_and_path_validation(tmp: Path) -> None:
@@ -124,6 +124,31 @@ def create_project(tmp: Path):
     }
     return cfg, human, agent, pp_root
 
+
+
+
+def test_project_init_is_agent_side(tmp: Path) -> None:
+    root = tmp / "root"
+    project = root / "projects" / "demo"
+    for rel in ["repo", "exchange/inbound", "exchange/outbound", "worktrees", "tasks", "reference", "results", "runtime"]:
+        (project / rel).mkdir(parents=True, exist_ok=True)
+
+    human = tmp / "human-init"
+    run("git", "init", "-q", "-b", "main", str(human))
+    git(human, "config", "user.name", "Human Test")
+    git(human, "config", "user.email", "human@example.invalid")
+    head = commit(human, "base.txt", "base\n")
+    bundle = project / "exchange/inbound/init.bundle"
+    git(human, "bundle", "create", str(bundle), "main")
+    (project / "project.json").write_text(json.dumps({"main_branch": "main", "created_from": head}))
+
+    cfg = {"root": str(root), "ops_group": "unused-test-group"}
+    result = agentd.op_project_init(cfg, {"project": "demo", "bundle": "init.bundle"})
+    agent = project / "repo/agent"
+    assert result["integration_head"] == head
+    assert git(agent, "branch", "--show-current") == "agent/integration"
+    assert git(agent, "rev-parse", "HEAD") == head
+    assert not bundle.exists(), "consumed initialization bundle should be removed"
 
 
 def test_project_subroot_symlink_rejected(tmp: Path) -> None:
@@ -190,6 +215,8 @@ def main() -> None:
     test_human_controller_does_not_open_agent_git()
     with tempfile.TemporaryDirectory() as d:
         test_rpc_and_path_validation(Path(d))
+    with tempfile.TemporaryDirectory() as d:
+        test_project_init_is_agent_side(Path(d))
     with tempfile.TemporaryDirectory() as d:
         test_project_subroot_symlink_rejected(Path(d))
     with tempfile.TemporaryDirectory() as d:

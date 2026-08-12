@@ -50,9 +50,9 @@ repo/agent                     agent-controlled after initialization
     +-- temporary worktrees only for parallel requirements
 ```
 
-`repo/agent` is created once with `git clone --no-local`, preventing local Git-object hardlinks to `repo/main`.
+`repo/agent` is created by `agentd` while running as `agentdev`. Human-side `agentctl` first exports the selected committed history from `repo/main` as an inbound Git bundle; `agentd` verifies that bundle, creates the agent repository, and checks out `agent/integration` from the expected commit. The agent checkout is therefore owned by `agentdev` from creation and is never a local clone of the human checkout.
 
-After write access to `repo/agent` is handed to `agentdev`, **human-side `agentctl` never executes Git inside that repository again**. Git lifecycle operations are executed by `agentd` as `agentdev`. History crosses the trust boundary as Git bundle files rather than by opening the other side's `.git` directory.
+**Human-side `agentctl` never executes Git inside `repo/agent`.** All Git lifecycle operations for the agent checkout are executed by `agentd` as `agentdev`. History crosses the trust boundary only through controlled Git bundles rather than by opening the other side's `.git` directory. The `repo/` namespace uses split ownership so the human-controlled and agent-controlled checkouts remain separate, while the exchange namespace grants `agentdev` only the traversal/access required for the broker-managed handoff.
 
 ## Directory layout
 
@@ -94,7 +94,7 @@ agent-dev-codex-home
 agent-dev-cursor-home
 ```
 
-The authoritative Codex and Cursor policy files are deployed under `/srv/agent-dev/platform/seed` and bind-mounted read-only over the mutable provider homes.
+Provider defaults are deployed under `/srv/agent-dev/platform/seed`, but provider runtime configuration follows each CLI's requirements. Codex keeps its authoritative `config.toml` mounted read-only. Cursor receives its `cli-config.json` as an initial seed in the persistent Cursor home and is then allowed to maintain that active file because the Cursor CLI performs atomic rewrites of its configuration. The outer Podman boundary remains authoritative for host access in both cases.
 
 ## Installation
 
@@ -174,7 +174,7 @@ Provider authentication/session state is stored in the provider-specific mutable
 agentctl project-import question-manager ~/projects/question-manager
 ```
 
-This creates the localized human checkout and the one persistent agent checkout. There is no clone-per-requirement model.
+This creates the localized human checkout and initializes one persistent agent checkout. `agentctl` transfers the initial committed history through an inbound Git bundle, and `agentd` creates `repo/agent` directly as `agentdev`. There is no clone-per-requirement model and no human-side Git access to the agent checkout.
 
 Alternatively:
 
@@ -184,7 +184,7 @@ agentctl project-create question-manager
 agentctl project-init question-manager
 ```
 
-`project-init` is the one-time handoff point. Before handoff, `agentctl` may initialize the agent clone. After handoff, Git operations in `repo/agent` are broker-owned.
+`project-init` is the one-time repository handoff point. Human-side `agentctl` creates an inbound Git bundle from `repo/main`; `agentd` verifies the bundle and creates `repo/agent` as `agentdev`, checking out `agent/integration` at the recorded source commit. Human-side `agentctl` never runs Git inside `repo/agent`, including during initialization.
 
 ## Sync committed human changes into the agent integration branch
 
@@ -280,7 +280,7 @@ The human can fetch that bundle into a review ref in `repo/main`, inspect it wit
 
 The outer Podman boundary is authoritative. Provider permissions/sandboxes are defense-in-depth guardrails.
 
-Codex policy defaults to `workspace-write`, `on-request`, and no model-generated command network inside the Codex workspace sandbox. Cursor uses an explicit global CLI configuration with required schema fields and allowlist mode. Provider policy files are mounted read-only; auth/session state remains writable in provider-specific volumes.
+Codex policy defaults to `workspace-write`, `on-request`, and no model-generated command network inside the Codex workspace sandbox. Its active policy file is mounted read-only. Cursor uses an explicit global CLI configuration with required schema fields and allowlist mode, but its active `cli-config.json` is writable because Cursor manages that file itself; the deployed seed is used only to initialize missing Cursor configuration. Auth/session state remains writable in provider-specific volumes.
 
 ## Validation
 
@@ -301,10 +301,10 @@ The check path is self-contained: it installs the Ansible bootstrap dependency i
 They cover:
 
 - Python/Bash/JSON syntax;
-- no-local Git clone model;
-- Git bundle synchronization;
+- broker-side creation and ownership of `repo/agent` from an inbound Git bundle;
+- Git bundle synchronization across the human/agent trust boundary;
 - sequential + parallel Git behavior;
-- no human-side Git access to `repo/agent` after handoff;
+- no human-side Git access to `repo/agent`, including repository initialization;
 - strict RPC field rejection;
 - symlink mount-source and project-subroot rejection;
 - parallel dependency integration semantics;

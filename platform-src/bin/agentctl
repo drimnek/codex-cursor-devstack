@@ -114,19 +114,9 @@ def ensure_git_repo(repo: Path, label: str) -> None:
 def set_project_traverse_for_agent(cfg: dict, pp: dict[str, Path]) -> None:
     agent = cfg["agent_user"]
     run(["setfacl", "-m", f"u:{agent}:x", pp["root"]])
-    run(["setfacl", "-m", f"u:{agent}:x", pp["repo_root"]])
-
-
-def grant_agent_rw(cfg: dict, path: Path) -> None:
-    agent = cfg["agent_user"]
-    ops = cfg["ops_group"]
-    # Preserve executable bits from the repository while removing world access.
-    run(["chmod", "-R", "u+rwX,g+rwX,o-rwx", path])
-    run(["find", path, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"])
-    run(["find", path, "-type", "d", "-exec", "setfacl", "-m",
-         f"u:{agent}:rwx,d:u:{agent}:rwx,d:g:{ops}:rwx,d:m::rwx", "{}", "+"])
-    run(["find", path, "-type", "f", "!", "-perm", "/111", "-exec", "setfacl", "-m", f"u:{agent}:rw", "{}", "+"])
-    run(["find", path, "-type", "f", "-perm", "/111", "-exec", "setfacl", "-m", f"u:{agent}:rwx", "{}", "+"])
+    # agentd needs to reach inbound/outbound without being able to list the
+    # exchange namespace itself. Child directories receive their own ACLs.
+    run(["setfacl", "-m", f"u:{agent}:x", pp["exchange"]])
 
 
 def grant_agent_ro(cfg: dict, path: Path) -> None:
@@ -347,9 +337,16 @@ def cmd_project_create(cfg: dict, args) -> None:
         run(["chgrp", ops, path])
         os.chmod(path, 0o2770)
 
+    # repo/ is a sticky handoff namespace: operators create repo/main while
+    # agentd can create repo/agent as agentdev without either identity being
+    # able to rename or remove the other identity's checkout. agentdev gets
+    # write+traverse, but not directory listing, on the parent.
+    agent = cfg["agent_user"]
+    os.chmod(pp["repo_root"], 0o3770)
+    run(["setfacl", "-m", f"u:{agent}:-wx", pp["repo_root"]])
+
     # agentd needs traversal but never receives access to repo/main.
     set_project_traverse_for_agent(cfg, pp)
-    agent = cfg["agent_user"]
     for path in [pp["worktrees"], pp["tasks"], pp["results"], pp["runtime"], pp["inbound"], pp["outbound"]]:
         run(["setfacl", "-m", f"u:{agent}:rwx,d:u:{agent}:rwx", path])
     # Human operators need to read bundles created by agentd even though agentd
@@ -381,12 +378,7 @@ def cmd_project_import(cfg: dict, args) -> None:
 
 
 def cmd_project_init(cfg: dict, args) -> None:
-    """Create repo/agent, then permanently hand that checkout to agentdev.
-
-    Git commands executed here are safe because the agent identity has not yet
-    received write access to repo/agent. After grant_agent_rw(), agentctl never
-    executes Git in repo/agent again.
-    """
+    """Initialize repo/agent through agentd so it is agent-owned from birth."""
     project = check_name(args.project, "project")
     pp = project_paths(cfg, project)
     ensure_git_repo(pp["main"], "repo/main")
@@ -398,15 +390,6 @@ def cmd_project_init(cfg: dict, args) -> None:
         die("repo/main is in detached HEAD state; check out the intended main branch first")
     main_commit = git_text(pp["main"], "rev-parse", "HEAD")
 
-    # --no-local prevents Git object hardlinks between the trusted human
-    # checkout and the agent-controlled checkout.
-    run(["git", "clone", "--no-local", pp["main"], pp["agent"]])
-    git(pp["agent"], "remote", "remove", "origin")
-    git(pp["agent"], "switch", "-c", INTEGRATION_BRANCH)
-    git(pp["agent"], "config", "user.name", "AI Development Agent")
-    git(pp["agent"], "config", "user.email", "agent@localhost")
-    git(pp["agent"], "config", "commit.gpgSign", "false")
-
     meta = {
         "project": project,
         "main_branch": main_branch,
@@ -415,11 +398,22 @@ def cmd_project_init(cfg: dict, args) -> None:
         "created_from": main_commit,
     }
     write_json(pp["project_meta"], meta, cfg, agent_read=True)
-    grant_agent_rw(cfg, pp["agent"])
-    grant_agent_ro(cfg, pp["reference"])
+
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    name = f"project-init-{stamp}-{os.getpid()}.bundle"
+    tmp = pp["inbound"] / f".{name}.tmp"
+    final = pp["inbound"] / name
+    run(["git", "-C", pp["main"], "bundle", "create", tmp, main_branch])
+    os.replace(tmp, final)
+    os.chmod(final, 0o640)
+    run(["setfacl", "-m", f"u:{cfg['agent_user']}:r", final])
+
+    rc = rpc(cfg, {"op": "project-init", "project": project, "bundle": name})
+    if rc != 0:
+        die(f"agent-side repository initialization failed; inbound bundle retained at {final}", rc)
     print(f"Initialized persistent agent repository: {pp['agent']}")
     print(f"Integration branch: {INTEGRATION_BRANCH}")
-    print("repo/agent is now agent-controlled; agentctl will not execute Git inside it.")
+    print("repo/agent is agent-owned; human-side agentctl never executes Git inside it.")
 
 
 def cmd_reference_sync(cfg: dict, args) -> None:
