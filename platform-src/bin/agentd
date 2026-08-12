@@ -18,10 +18,13 @@ import pty
 import re
 import select
 import shutil
+import signal
 import socket
 import struct
 import subprocess
 import termios
+import time
+import uuid
 from pathlib import Path
 
 CONFIG_PATH = Path("/srv/agent-dev/platform/config/platform.json")
@@ -34,6 +37,7 @@ ALLOWED_OPS = {
 }
 INTEGRATION_BRANCH = "agent/integration"
 BRANCH_PREFIX = "agent/"
+AUTH_TIMEOUT_SECONDS = 900
 REQUEST_FIELDS = {
     "ping": {"op"},
     "build": {"op"},
@@ -333,14 +337,83 @@ def set_winsize(fd: int, rows: int, cols: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
-def stream_interactive(conn: socket.socket, fileobj, argv: list[str], *, cwd=None, env=None) -> int:
+def terminate_process_group(proc: subprocess.Popen, *, int_grace: float = 2.0, term_grace: float = 3.0) -> None:
+    """Terminate one interactive request without affecting unrelated broker work."""
+    if proc.poll() is not None:
+        return
+    for sig, grace in ((signal.SIGINT, int_grace), (signal.SIGTERM, term_grace)):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            return
+        try:
+            proc.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    proc.wait()
+
+
+def new_interactive_cidfile(cfg: dict) -> Path:
+    root = Path(cfg["state_dir"]) / "interactive"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return root / f"{uuid.uuid4().hex}.cid"
+
+
+def add_cidfile(argv: list[str], cidfile: Path) -> list[str]:
+    if len(argv) < 2 or argv[:2] != ["podman", "run"]:
+        raise ValueError("interactive executor must use podman run")
+    return [*argv[:2], "--cidfile", str(cidfile), *argv[2:]]
+
+
+def cleanup_interactive_container(cidfile: Path | None) -> None:
+    if cidfile is None:
+        return
+    try:
+        cid = cidfile.read_text().strip()
+    except FileNotFoundError:
+        cid = ""
+    if cid:
+        subprocess.run(["podman", "rm", "-f", cid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    cidfile.unlink(missing_ok=True)
+
+
+def stream_interactive(
+    conn: socket.socket,
+    fileobj,
+    argv: list[str],
+    *,
+    cwd=None,
+    env=None,
+    timeout_seconds: float | None = None,
+    cidfile: Path | None = None,
+) -> int:
     LOG.info("exec interactive argv0=%s", argv[0])
     master, slave = pty.openpty()
-    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+    proc = subprocess.Popen(
+        argv, cwd=cwd, env=env, stdin=slave, stdout=slave, stderr=slave,
+        close_fds=True, start_new_session=True,
+    )
     os.close(slave)
+    cancelled = False
+    timed_out = False
+    deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
     try:
         while True:
-            readable, _, _ = select.select([master, conn], [], [], 0.25)
+            if deadline is not None and time.monotonic() >= deadline:
+                timed_out = True
+                send_output(conn, b"\r\nAuthentication timed out.\r\n")
+                terminate_process_group(proc)
+                break
+
+            select_timeout = 0.25
+            if deadline is not None:
+                select_timeout = max(0.0, min(select_timeout, deadline - time.monotonic()))
+            readable, _, _ = select.select([master, conn], [], [], select_timeout)
             if master in readable:
                 try:
                     data = os.read(master, 4096)
@@ -351,7 +424,8 @@ def stream_interactive(conn: socket.socket, fileobj, argv: list[str], *, cwd=Non
             if conn in readable:
                 msg = recv_json_line(fileobj)
                 if msg is None:
-                    proc.terminate()
+                    cancelled = True
+                    terminate_process_group(proc)
                     break
                 if msg.get("type") == "input":
                     try:
@@ -363,6 +437,12 @@ def stream_interactive(conn: socket.socket, fileobj, argv: list[str], *, cwd=Non
                         set_winsize(master, int(msg["rows"]), int(msg["cols"]))
                     except Exception:
                         pass
+                elif msg.get("type") == "cancel":
+                    cancelled = True
+                    terminate_process_group(proc)
+                    break
+                else:
+                    raise ValueError("unsupported interactive RPC frame")
             if proc.poll() is not None:
                 while True:
                     try:
@@ -373,8 +453,15 @@ def stream_interactive(conn: socket.socket, fileobj, argv: list[str], *, cwd=Non
                         break
                     send_output(conn, data)
                 break
+        if timed_out:
+            return 124
+        if cancelled:
+            return 130
         return proc.wait()
     finally:
+        if proc.poll() is None:
+            terminate_process_group(proc)
+        cleanup_interactive_container(cidfile)
         os.close(master)
 
 
@@ -672,9 +759,17 @@ def op_auth(cfg: dict, conn: socket.socket, fileobj, provider: str) -> int:
         argv = [*runtime, cfg["images"][provider], "codex", "login", "--device-auth"]
     else:
         argv = [*runtime, "-e", "NO_OPEN_BROWSER=1", cfg["images"][provider], "agent", "login"]
+    cidfile = new_interactive_cidfile(cfg)
+    argv = add_cidfile(argv, cidfile)
     send(conn, {"type": "start", "interactive": True})
-    rc = stream_interactive(conn, fileobj, argv)
-    send(conn, {"type": "exit", "code": rc})
+    rc = stream_interactive(
+        conn, fileobj, argv, timeout_seconds=AUTH_TIMEOUT_SECONDS, cidfile=cidfile
+    )
+    try:
+        send(conn, {"type": "exit", "code": rc})
+    except OSError:
+        if rc != 130:
+            raise
     return rc
 
 
@@ -782,9 +877,15 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
     argv = [*runtime, image, *agent_args]
     lock_name = "integration" if rec["mode"] == "integration" or rec.get("status") == "merged" else task
     with lock_one(pp, lock_name, readonly):
+        cidfile = new_interactive_cidfile(cfg)
+        argv = add_cidfile(argv, cidfile)
         send(conn, {"type": "start", "interactive": True})
-        rc = stream_interactive(conn, fileobj, argv)
-        send(conn, {"type": "exit", "code": rc})
+        rc = stream_interactive(conn, fileobj, argv, cidfile=cidfile)
+        try:
+            send(conn, {"type": "exit", "code": rc})
+        except OSError:
+            if rc != 130:
+                raise
         return rc
 
 

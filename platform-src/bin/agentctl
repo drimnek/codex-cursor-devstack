@@ -20,6 +20,7 @@ import socket
 import subprocess
 import sys
 import termios
+import threading
 import tty
 from pathlib import Path
 
@@ -197,18 +198,36 @@ def recv_line(fileobj) -> dict:
 def rpc(cfg: dict, request: dict, *, interactive=False) -> int:
     sock = rpc_connect(cfg)
     fileobj = sock.makefile("rb")
-    send_frame(sock, request)
+    send_lock = threading.Lock()
+    cancel_sent = threading.Event()
+
+    def send_control(obj: dict) -> None:
+        with send_lock:
+            send_frame(sock, obj)
+
+    send_control(request)
 
     old_term = None
+    old_sigint = None
+    old_sigwinch = None
     stdin_fd = None
     stop = False
+
+    def request_cancel(*_unused) -> None:
+        if cancel_sent.is_set():
+            return
+        cancel_sent.set()
+        try:
+            send_control({"type": "cancel"})
+        except OSError:
+            pass
 
     def send_resize(*_unused):
         if not interactive or not sys.stdin.isatty():
             return
         try:
             size = os.get_terminal_size(sys.stdin.fileno())
-            send_frame(sock, {"type": "resize", "rows": size.lines, "cols": size.columns})
+            send_control({"type": "resize", "rows": size.lines, "cols": size.columns})
         except OSError:
             pass
 
@@ -227,13 +246,17 @@ def rpc(cfg: dict, request: dict, *, interactive=False) -> int:
             die(f"unexpected response from agentd: {first}")
 
         interactive = bool(first.get("interactive", interactive))
+        if interactive:
+            old_sigint = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, request_cancel)
+
         if interactive and sys.stdin.isatty():
             stdin_fd = sys.stdin.fileno()
             old_term = termios.tcgetattr(stdin_fd)
+            old_sigwinch = signal.getsignal(signal.SIGWINCH)
             tty.setraw(stdin_fd)
             signal.signal(signal.SIGWINCH, send_resize)
             send_resize()
-            import threading
 
             def pump_input():
                 nonlocal stop
@@ -244,8 +267,14 @@ def rpc(cfg: dict, request: dict, *, interactive=False) -> int:
                         return
                     if not data:
                         return
+                    before, sep, _after = data.partition(b"\x03")
                     try:
-                        send_frame(sock, {"type": "input", "data": base64.b64encode(data).decode()})
+                        if sep:
+                            if before:
+                                send_control({"type": "input", "data": base64.b64encode(before).decode()})
+                            request_cancel()
+                            return
+                        send_control({"type": "input", "data": base64.b64encode(data).decode()})
                     except OSError:
                         return
 
@@ -255,6 +284,8 @@ def rpc(cfg: dict, request: dict, *, interactive=False) -> int:
             try:
                 msg = recv_line(fileobj)
             except EOFError:
+                if cancel_sent.is_set():
+                    return 130
                 die("agentd connection closed unexpectedly")
             mtype = msg.get("type")
             if mtype == "output":
@@ -267,6 +298,10 @@ def rpc(cfg: dict, request: dict, *, interactive=False) -> int:
                 return int(msg.get("code", 1))
     finally:
         stop = True
+        if old_sigwinch is not None:
+            signal.signal(signal.SIGWINCH, old_sigwinch)
+        if old_sigint is not None:
+            signal.signal(signal.SIGINT, old_sigint)
         if old_term is not None and stdin_fd is not None:
             termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_term)
         sock.close()
