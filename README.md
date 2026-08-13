@@ -204,7 +204,7 @@ Dependent requirements normally execute on the shared integration branch:
 agentctl task-start question-manager REQ-001
 agentctl run cursor question-manager REQ-001 \
   "Implement REQ-001 using the project TDD workflow and commit the completed change."
-agentctl run codex question-manager REQ-001 --readonly \
+agentctl run --readonly --outer-only codex question-manager REQ-001 \
   "Review REQ-001 against the requirement and tests."
 agentctl task-complete question-manager REQ-001
 
@@ -222,7 +222,7 @@ agentctl task-start question-manager REQ-010 --parallel --depends-on REQ-009
 agentctl task-start question-manager REQ-011 --parallel --depends-on REQ-009
 
 agentctl run cursor question-manager REQ-010 "Implement and commit REQ-010."
-agentctl run codex  question-manager REQ-011 "Implement and commit REQ-011."
+agentctl run --outer-only codex question-manager REQ-011 "Implement and commit REQ-011."
 
 agentctl task-complete question-manager REQ-010
 agentctl task-complete question-manager REQ-011
@@ -280,7 +280,11 @@ The human can fetch that bundle into a review ref in `repo/main`, inspect it wit
 
 The outer Podman boundary is authoritative. Provider permissions/sandboxes are defense-in-depth guardrails.
 
-Codex policy defaults to `workspace-write`, `on-request`, and no model-generated command network inside the Codex workspace sandbox. Its active policy file is mounted read-only. Cursor uses an explicit global CLI configuration with required schema fields and allowlist mode, but its active `cli-config.json` is writable because Cursor manages that file itself; the deployed seed is used only to initialize missing Cursor configuration. Auth/session state remains writable in provider-specific volumes.
+Codex task execution uses `codex exec` so broker-managed runs are non-interactive. The broker sets `approval_policy=never` for task execution and selects the Codex sandbox from the requested execution mode: read-only runs use `read-only`, normal writable runs use `workspace-write`, and `--outer-only` uses `danger-full-access` inside the executor while relying on the outer Podman boundary for isolation.
+
+`--outer-only` is Codex-only and disables the nested Codex OS sandbox; it does not grant additional host access beyond what the broker already exposes to the container. `--readonly --outer-only` is supported: the broker still mounts the task workspace read-only through Podman while Codex runs without the nested Linux sandbox. Anything else exposed inside the executor remains governed by the Podman/container policy rather than by Codex's inner sandbox.
+
+Codex keeps its active policy file mounted read-only. Cursor uses an explicit global CLI configuration with required schema fields and allowlist mode, but its active `cli-config.json` is writable because Cursor manages that file itself; the deployed seed is used only to initialize missing Cursor configuration. Auth/session state remains writable in provider-specific volumes.
 
 ## Validation
 
@@ -336,7 +340,7 @@ agentctl auth cursor
 agentctl status
 ```
 
-The first real deployment should also verify the nested Codex sandbox behavior under the chosen Podman profile.
+The first real deployment should verify both supported Codex execution paths under the chosen Podman profile. If the nested Linux sandbox is available, validate normal `read-only` / `workspace-write` execution. If the container profile prevents nested sandbox initialization, validate `--outer-only` and specifically confirm that `--readonly --outer-only` leaves the workspace read-only and does not move the repository HEAD during review.
 
 ## Current limitations
 
@@ -348,6 +352,7 @@ The first real deployment should also verify the nested Codex sandbox behavior u
 - No automatic conflict resolution or promotion to the human main branch.
 - GitNexus is optional and not injected as an MCP dependency into the core executor images.
 - Cursor CLI installation is frozen at image build time but is not yet pinned by a vendor-provided immutable installer artifact in this stack.
+- `--outer-only` intentionally disables Codex's inner OS sandbox and relies on broker-generated Podman isolation; resources exposed inside that executor are not additionally restricted by the Codex sandbox.
 
 ## Scope discipline
 
