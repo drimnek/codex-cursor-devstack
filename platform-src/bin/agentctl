@@ -459,6 +459,56 @@ def cmd_project_export(cfg: dict, args) -> None:
     raise SystemExit(rpc(cfg, {"op": "project-export", "project": project}))
 
 
+def _real_dir(path: Path) -> bool:
+    try:
+        return not path.is_symlink() and path.is_dir()
+    except OSError:
+        return False
+
+
+def _real_file(path: Path) -> bool:
+    try:
+        return not path.is_symlink() and path.is_file()
+    except OSError:
+        return False
+
+
+def discover_projects(cfg: dict) -> list[dict]:
+    """List structurally available projects without entering agent-owned Git state."""
+    projects = Path(cfg["root"]) / "projects"
+    if projects.is_symlink() or not projects.is_dir():
+        die(f"projects namespace is not a real directory: {projects}")
+    try:
+        entries = sorted(projects.iterdir(), key=lambda path: path.name)
+    except OSError as exc:
+        die(f"cannot list projects namespace {projects}: {exc}")
+
+    result: list[dict] = []
+    for entry in entries:
+        if not NAME_RE.fullmatch(entry.name) or not _real_dir(entry):
+            continue
+        repo_root = entry / "repo"
+        ready = (
+            _real_file(entry / "project.json")
+            and _real_dir(repo_root)
+            and _real_dir(repo_root / "agent")
+        )
+        result.append({
+            "project": entry.name,
+            "state": "ready" if ready else "incomplete",
+        })
+    return result
+
+
+def cmd_project_list(cfg: dict, args) -> None:
+    projects = discover_projects(cfg)
+    if args.oneline:
+        for project in projects:
+            print(f"{project['project']}:{project['state']}")
+        return
+    print(json.dumps(projects, indent=2, sort_keys=True))
+
+
 def task_rpc(cfg: dict, args, op: str) -> None:
     req = {"op": op, "project": check_name(args.project, "project"), "task": check_name(args.task, "task")}
     if op == "task-start":
@@ -533,6 +583,8 @@ def parser() -> argparse.ArgumentParser:
     psync.add_argument("project")
     pexp = sub.add_parser("project-export", help="export agent/integration as a reviewable Git bundle")
     pexp.add_argument("project")
+    plist = sub.add_parser("project-list", help="list structurally available projects")
+    plist.add_argument("--oneline", action="store_true", help="print one project per line as name:state")
     pref = sub.add_parser("reference-sync", help="copy project reference material and expose it read-only to agents")
     pref.add_argument("project"); pref.add_argument("source")
     pst = sub.add_parser("project-status", help="show integration checkout and task state")
@@ -571,7 +623,7 @@ def main() -> None:
         "versions": cmd_versions, "smoke": cmd_smoke,
         "project-create": cmd_project_create, "project-import": cmd_project_import,
         "project-init": cmd_project_init, "project-sync": cmd_project_sync, "project-export": cmd_project_export,
-        "reference-sync": cmd_reference_sync, "project-status": cmd_project_status,
+        "project-list": cmd_project_list, "reference-sync": cmd_reference_sync, "project-status": cmd_project_status,
         "task-start": cmd_task_start, "task-complete": cmd_task_complete,
         "task-merge": cmd_task_merge, "task-abort": cmd_task_abort, "task-list": cmd_task_list,
         "run": cmd_run, "index": cmd_index,

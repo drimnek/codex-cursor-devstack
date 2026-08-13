@@ -186,6 +186,8 @@ agentctl project-init question-manager
 
 `project-init` is the one-time repository handoff point. Human-side `agentctl` creates an inbound Git bundle from `repo/main`; `agentd` verifies the bundle and creates `repo/agent` as `agentdev`, checking out `agent/integration` at the recorded source commit. Human-side `agentctl` never runs Git inside `repo/agent`, including during initialization.
 
+`project-list` is a human-side structural discovery command. It lists valid immediate project directories without executing Git in `repo/agent` and reports each project as `ready` or `incomplete`. JSON is the default output. Use `project-list --oneline` for shell-friendly `name:state` output, one project per line. It deliberately does not route discovery through `agentd`, because the `agentdev` identity only has traverse access to the projects namespace and must not gain directory-listing access across projects.
+
 ## Sync committed human changes into the agent integration branch
 
 ```bash
@@ -244,6 +246,8 @@ Sequential integration history is not automatically reset/reverted by the broker
 ## Project status and task metadata
 
 ```bash
+agentctl project-list
+agentctl project-list --oneline
 agentctl project-status question-manager
 agentctl task-list question-manager
 ```
