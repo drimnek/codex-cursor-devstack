@@ -296,8 +296,18 @@ def seed_provider_home(cfg: dict, provider: str) -> None:
         script = (
             "set -eu; "
             "mkdir -p /state/.cursor; "
-            "if [ ! -e /state/.cursor/cli-config.json ]; then "
-            "install -m 0600 /seed/cli-config.json /state/.cursor/cli-config.json; "
+            "state=/state/.cursor/cli-config.json; "
+            "seed=/seed/cli-config.json; "
+            "if [ ! -e \"$state\" ]; then "
+            "install -m 0600 \"$seed\" \"$state\"; "
+            "else "
+            "jq -e '(.permissions | type) == \"object\"' \"$seed\" >/dev/null; "
+            "tmp=$(mktemp /state/.cursor/cli-config.json.tmp.XXXXXX); "
+            "trap 'rm -f \"$tmp\"' EXIT; "
+            "jq --slurpfile seed \"$seed\" '.permissions = $seed[0].permissions' \"$state\" > \"$tmp\"; "
+            "chmod 0600 \"$tmp\"; "
+            "mv -f \"$tmp\" \"$state\"; "
+            "trap - EXIT; "
             "fi"
         )
     else:
@@ -308,7 +318,8 @@ def seed_provider_home(cfg: dict, provider: str) -> None:
 
 def provider_policy_mounts(cfg: dict, provider: str) -> list[str]:
     # Codex policy is immutable at runtime. Cursor's CLI rewrites cli-config.json
-    # atomically, so its active config must live writable in the provider volume.
+    # atomically, so its active config stays writable while seed_provider_home()
+    # reconciles platform-managed permissions before provider execution.
     if provider == "cursor":
         return []
     seed = provider_seed_dir(cfg, provider)
