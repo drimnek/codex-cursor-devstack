@@ -94,7 +94,7 @@ agent-dev-codex-home
 agent-dev-cursor-home
 ```
 
-Provider defaults are deployed under `/srv/agent-dev/platform/seed`, but provider runtime configuration follows each CLI's requirements. Codex keeps its authoritative `config.toml` mounted read-only. Cursor receives its `cli-config.json` as an initial seed in the persistent Cursor home and is then allowed to maintain that active file because the Cursor CLI performs atomic rewrites of its configuration. The outer Podman boundary remains authoritative for host access in both cases.
+Provider defaults are deployed under `/srv/agent-dev/platform/seed`, but provider runtime configuration follows each CLI's requirements. Codex keeps its authoritative `config.toml` mounted read-only. Cursor keeps its active `cli-config.json` writable because the CLI performs atomic rewrites of that file. The broker materializes the complete seed when the active Cursor config is missing and, on later provider use, reconciles only the platform-managed `permissions` field from the deployed seed while preserving other Cursor-managed fields. The outer Podman boundary remains authoritative for host access in both cases.
 
 ## Installation
 
@@ -284,7 +284,7 @@ Codex task execution uses `codex exec` so broker-managed runs are non-interactiv
 
 `--outer-only` is Codex-only and disables the nested Codex OS sandbox; it does not grant additional host access beyond what the broker already exposes to the container. `--readonly --outer-only` is supported: the broker still mounts the task workspace read-only through Podman while Codex runs without the nested Linux sandbox. Anything else exposed inside the executor remains governed by the Podman/container policy rather than by Codex's inner sandbox.
 
-Codex keeps its active policy file mounted read-only. Cursor uses an explicit global CLI configuration with required schema fields and allowlist mode, but its active `cli-config.json` is writable because Cursor manages that file itself; the deployed seed is used only to initialize missing Cursor configuration. Auth/session state remains writable in provider-specific volumes.
+Codex keeps its active policy file mounted read-only. Cursor uses an explicit global CLI configuration with required schema fields and allowlist mode, but its active `cli-config.json` remains writable because Cursor manages that file itself. Before Cursor provider operations, the broker reconciles `permissions` from the deployed seed into the active config using an atomic replacement, preserving Cursor-managed fields outside `permissions`. This makes the deployed seed authoritative for platform policy without making the entire active Cursor config immutable. Auth/session state remains writable in provider-specific volumes.
 
 ## Validation
 
@@ -305,6 +305,7 @@ The check path is self-contained: it installs the Ansible bootstrap dependency i
 They cover:
 
 - Python/Bash/JSON syntax;
+- Cursor policy reconciliation, including initial seeding, stale-policy replacement, preservation of non-policy fields, mode `0600`, and atomic temporary-file cleanup;
 - broker-side creation and ownership of `repo/agent` from an inbound Git bundle;
 - Git bundle synchronization across the human/agent trust boundary;
 - sequential + parallel Git behavior;
@@ -341,6 +342,20 @@ agentctl status
 ```
 
 The first real deployment should verify both supported Codex execution paths under the chosen Podman profile. If the nested Linux sandbox is available, validate normal `read-only` / `workspace-write` execution. If the container profile prevents nested sandbox initialization, validate `--outer-only` and specifically confirm that `--readonly --outer-only` leaves the workspace read-only and does not move the repository HEAD during review.
+
+### Sequential acceptance gate
+
+Before moving from sequential validation to parallel/worktree acceptance, confirm the following on a disposable project without manual filesystem-permission repair, direct provider-container invocation, or manual provider-config edits:
+
+- a fresh `project-import` creates an agent-owned `repo/agent`, and `project-status` succeeds immediately;
+- one sequential task can be started, implemented, committed, reviewed cross-provider, and completed with a clean repository;
+- Cursor can read the workspace, run allowed Git commands, create a commit in writable mode, and enforce at least one representative deny rule from the reconciled platform policy;
+- stale Cursor permissions are automatically reconciled to the deployed seed while non-policy Cursor fields are preserved;
+- Codex can run non-interactively for both read-only review and writable execution through the selected container/sandbox mode;
+- `project-export` produces a valid Git bundle whose integration ref matches the expected agent result on the human side;
+- `./tests/package-check.sh`, `./bootstrap.sh --check`, `agentctl ping`, `agentctl versions`, `agentctl smoke`, and `agentctl status` all pass after the final source-controlled fixes are deployed.
+
+When these checks pass, the sequential pre-pilot acceptance stage is complete; the next functional stage is parallel task/worktree, merge, abort, locking, and dependency-metadata acceptance.
 
 ## Current limitations
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-python3 -m py_compile "$ROOT/platform-src/bin/agentctl" "$ROOT/platform-src/bin/agentd" "$ROOT/tests/security-regression.py"
+python3 -m py_compile "$ROOT/platform-src/bin/agentctl" "$ROOT/platform-src/bin/agentd" "$ROOT/tests/security-regression.py" "$ROOT/tests/cursor-policy-reconciliation-regression.py"
 rm -rf "$ROOT/platform-src/bin/__pycache__" "$ROOT/tests/__pycache__"
 bash -n "$ROOT/bootstrap.sh" "$ROOT/tests/git-model-smoke.sh"
 python3 - <<PY
@@ -28,6 +28,7 @@ print('package syntax, bootstrap flow, and agent working-directory checks passed
 PY
 "$ROOT/tests/git-model-smoke.sh"
 python3 "$ROOT/tests/security-regression.py"
+python3 "$ROOT/tests/cursor-policy-reconciliation-regression.py"
 
 # Cursor installer layout regression: preserve the complete ~/.local tree.
 CURSOR_CF="$ROOT/platform-src/containers/Containerfile.cursor"
