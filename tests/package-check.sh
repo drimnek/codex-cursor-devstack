@@ -30,6 +30,7 @@ PY
 python3 "$ROOT/tests/security-regression.py"
 python3 "$ROOT/tests/cursor-policy-reconciliation-regression.py"
 python3 "$ROOT/tests/parallel-lifecycle-regression.py"
+python3 "$ROOT/tests/locking-concurrency-regression.py"
 
 # Cursor installer layout regression: preserve the complete ~/.local tree.
 CURSOR_CF="$ROOT/platform-src/containers/Containerfile.cursor"
