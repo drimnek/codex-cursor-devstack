@@ -24,7 +24,8 @@ Podman. It checks:
 - secure `/tmp` and `/run` tmpfs mounts;
 - read-only and writable workspace mount semantics;
 - read-only reference and task metadata mounts;
-- provider state source type and target;
+- scoped provider state source type and target;
+- absence of a persistent whole-home mount at `/root`;
 - Codex immutable policy mount;
 - Cursor writable active configuration semantics;
 - absence of Docker/Podman socket, host-home, broad platform-root, privileged,
@@ -37,10 +38,10 @@ Podman. It checks:
 The source audit reports `PASS`, `WARN`, and `FAIL`.
 
 Current provider access that still requires design review is reported as
-`WARN`, including a writable provider home mounted at `/root` and provider
-outbound network access. HARD-01 makes Podman proxy-environment propagation an
-explicit invariant: executor runtime arguments must include
-`--http-proxy=false`; absence of that flag is a `FAIL`.
+`WARN`, including provider credential readability inside the scoped state
+directory and provider outbound network access. HARD-01 makes Podman
+proxy-environment propagation an explicit invariant. HARD-02 removes persistent
+whole-home mounts and keeps only provider-specific state writable.
 
 `tests/manual-executor-boundary-audit.sh` validates the deployed host and broker:
 
@@ -126,16 +127,41 @@ finalized and the intended boundary is encoded as stable assertions.
 
 ## Interpreting initial warnings
 
-### Writable provider home
+### Scoped provider state and credential readability
 
-A named provider volume mounted as `/root:rw` is structurally isolated from the
-human host home, but all provider state in that volume is available to
-processes running inside the provider executor. This includes any authentication,
-configuration, and cache state stored under the provider home.
+HARD-02 replaces the legacy whole-home mounts:
 
-This warning should be resolved by deciding which provider paths must remain
-writable and which credential material must be inaccessible to task shell
-processes.
+```text
+agent-dev-codex-home:/root:rw
+agent-dev-cursor-home:/root:rw
+```
+
+with scoped provider state:
+
+```text
+agent-dev-codex-state:/root/.codex:rw
+agent-dev-cursor-state:/root/.cursor:rw
+```
+
+On first use, the broker creates the new scoped volume and copies only the
+legacy `.codex` or `.cursor` subtree from the old whole-home volume. The old
+volume is retained unchanged as a rollback source. A layout marker prevents
+silent reuse of a partially initialized new state volume.
+
+For Codex, a legacy `config.toml` is not carried forward as active policy; the
+platform seed remains overlaid read-only at `/root/.codex/config.toml`.
+
+For Cursor, `cli-config.json` remains writable in the scoped state volume and
+platform-managed permissions continue to be reconciled before provider use.
+
+The executor root filesystem remains read-only outside these scoped state
+mounts. `agentctl smoke` checks that writing directly under `/root` fails while
+a temporary write inside the provider-specific state directory succeeds.
+
+This does **not** make provider credentials confidential from task processes.
+Authentication and cache data under `/root/.codex` or `/root/.cursor` are still
+readable by processes running as the provider executor identity. That residual
+risk remains a `WARN` and is a separate hardening problem.
 
 ### Provider network
 
@@ -172,3 +198,14 @@ deployment drift is absent or explained       PASS
 
 Warnings are not considered resolved merely because the audit exits zero in
 non-strict mode. They define the inputs for the following hardening patches.
+
+After HARD-02, the expected review warnings are limited to two categories per
+provider profile:
+
+```text
+provider credentials readable
+network
+```
+
+The previous `provider home writable` warning must be gone and a persistent
+mount at `/root` is a hard failure.

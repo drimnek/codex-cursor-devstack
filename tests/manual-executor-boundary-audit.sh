@@ -79,7 +79,7 @@ else
 fi
 
 if "$AGENTCTL" smoke; then
-  pass "agentctl smoke (socket/credential absence and workspace ro/rw smoke)"
+  pass "agentctl smoke (socket/credential absence, scoped provider state, and workspace ro/rw smoke)"
 else
   fail "agentctl smoke"
 fi

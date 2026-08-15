@@ -182,12 +182,16 @@ def audit_args(audit: Audit, provider: str, readonly: bool, args: list[str], wor
     meta = find_mount(args, "/task/metadata.json")
     audit.require(meta is not None and "ro" in mount_mode(meta).split(","), f"{label}: task metadata mode", "task metadata mounted ro", f"task metadata is not ro: {meta}")
 
-    home = find_mount(args, "/root")
-    audit.require(home is not None, f"{label}: provider state mount", "provider state is explicitly mounted", "provider state mount missing")
-    if home:
-        source = home.split(":", 1)[0]
-        audit.require(not source.startswith("/"), f"{label}: provider state source", "named volume, not host path", f"host path mounted as provider home: {source}")
-        audit.warn("rw" in mount_mode(home).split(","), f"{label}: provider home writable", "entire provider home is mounted at /root:rw; provider auth/config/cache are in the same writable/readable tree available to executor processes")
+    expected_state_target = f"/root/{'.codex' if provider == 'codex' else '.cursor'}"
+    root_home = find_mount(args, "/root")
+    state_mount = find_mount(args, expected_state_target)
+    audit.require(root_home is None, f"{label}: whole provider home exposure", "no persistent volume mounted at /root", f"unexpected whole-home mount: {root_home}")
+    audit.require(state_mount is not None, f"{label}: provider state mount", f"provider state mounted only at {expected_state_target}", f"provider state mount missing at {expected_state_target}")
+    if state_mount:
+        source = state_mount.split(":", 1)[0]
+        audit.require(not source.startswith("/"), f"{label}: provider state source", "named volume, not host path", f"host path mounted as provider state: {source}")
+        audit.require("rw" in mount_mode(state_mount).split(","), f"{label}: provider state writable", "scoped provider state is writable", f"provider state is not writable: {state_mount}")
+        audit.add("WARN", f"{label}: provider credentials readable", f"provider auth/config/cache under {expected_state_target} remain readable by executor processes; credential confidentiality is not solved by HARD-02")
 
     net = network_mode(args)
     if net == "none":
@@ -218,7 +222,7 @@ def audit_args(audit: Audit, provider: str, readonly: bool, args: list[str], wor
         "mode": "readonly" if readonly else "write",
         "network": net,
         "workspace_mount": ws,
-        "provider_home_mount": home,
+        "provider_state_mount": state_mount,
         "reference_mount": ref,
         "task_metadata_mount": meta,
         "mounts": mounts(args),
@@ -249,6 +253,11 @@ def main() -> int:
                     git_common=git_common,
                 )
                 inventory.append(audit_args(audit, provider, readonly, args, workspace))
+
+        audit.require(agentd.provider_volume("codex") == "agent-dev-codex-state", "Codex scoped state volume", "uses agent-dev-codex-state", f"unexpected volume: {agentd.provider_volume('codex')}")
+        audit.require(agentd.provider_volume("cursor") == "agent-dev-cursor-state", "Cursor scoped state volume", "uses agent-dev-cursor-state", f"unexpected volume: {agentd.provider_volume('cursor')}")
+        audit.require(agentd.legacy_provider_volume("codex") == "agent-dev-codex-home", "Codex legacy state source", "legacy whole-home volume retained only as migration source", f"unexpected legacy volume: {agentd.legacy_provider_volume('codex')}")
+        audit.require(agentd.legacy_provider_volume("cursor") == "agent-dev-cursor-home", "Cursor legacy state source", "legacy whole-home volume retained only as migration source", f"unexpected legacy volume: {agentd.legacy_provider_volume('cursor')}")
 
         codex_args = agentd.common_runtime_args(cfg, "codex", workspace, readonly=False, reference=reference, task_meta=task_meta)
         codex_policy = find_mount(codex_args, "/root/.codex/config.toml")
