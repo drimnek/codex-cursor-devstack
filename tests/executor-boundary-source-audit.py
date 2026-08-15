@@ -206,10 +206,12 @@ def audit_args(audit: Audit, provider: str, readonly: bool, args: list[str], wor
     audit.require(not device_flags, f"{label}: device passthrough", "no explicit device passthrough", f"device flags: {device_flags}")
 
     proxy_disabled = "--http-proxy=false" in args or (value_after(args, "--http-proxy") == "false")
-    if proxy_disabled:
-        audit.add("PASS", f"{label}: proxy env inheritance", "Podman HTTP proxy propagation explicitly disabled")
-    else:
-        audit.add("WARN", f"{label}: proxy env inheritance", "Podman HTTP proxy propagation is not explicitly disabled; review whether host proxy variables may enter provider containers")
+    audit.require(
+        proxy_disabled,
+        f"{label}: proxy env inheritance",
+        "Podman HTTP proxy propagation explicitly disabled",
+        "Podman HTTP proxy propagation must be explicitly disabled with --http-proxy=false",
+    )
 
     return {
         "provider": provider,

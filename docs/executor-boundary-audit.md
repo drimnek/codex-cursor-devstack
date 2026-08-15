@@ -36,9 +36,11 @@ Podman. It checks:
 
 The source audit reports `PASS`, `WARN`, and `FAIL`.
 
-Current provider access that requires design review is reported as `WARN`,
-including a writable provider home mounted at `/root`, provider outbound
-network access, and lack of an explicit Podman HTTP proxy propagation setting.
+Current provider access that still requires design review is reported as
+`WARN`, including a writable provider home mounted at `/root` and provider
+outbound network access. HARD-01 makes Podman proxy-environment propagation an
+explicit invariant: executor runtime arguments must include
+`--http-proxy=false`; absence of that flag is a `FAIL`.
 
 `tests/manual-executor-boundary-audit.sh` validates the deployed host and broker:
 
@@ -146,10 +148,15 @@ restriction.
 
 ### Proxy environment propagation
 
-The audit warns unless Podman HTTP proxy propagation is explicitly configured.
-The next hardening decision should determine whether provider containers need
-host proxy variables. If not, disable their propagation explicitly; if they are
-required, document them as part of the executor environment contract.
+HARD-01 disables Podman's automatic propagation of host proxy environment
+variables into executor containers with `--http-proxy=false`. The source audit
+treats absence of this explicit policy as `FAIL`.
+
+This does not disable container networking and does not prevent proxy variables
+that are deliberately supplied by another mechanism, such as an explicit
+`--env` option or an environment value baked into an image. If a future
+deployment requires an outbound proxy, add that proxy as a separate explicit
+executor contract rather than relying on implicit host-environment inheritance.
 
 ## Acceptance for this inventory step
 

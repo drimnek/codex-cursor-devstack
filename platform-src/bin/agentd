@@ -329,7 +329,7 @@ def provider_policy_mounts(cfg: dict, provider: str) -> list[str]:
 def common_runtime_args(cfg: dict, provider: str | None, workspace: Path | None = None, *, readonly=False, reference: Path | None = None, task_meta: Path | None = None, git_common: Path | None = None) -> list[str]:
     platform_root = Path(cfg["root"])
     args = [
-        "podman", "run", "--rm", "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
+        "podman", "run", "--rm", "--http-proxy=false", "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
         f"--pids-limit={cfg['limits']['pids']}", f"--memory={cfg['limits']['memory']}", f"--cpus={cfg['limits']['cpus']}",
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m", "--tmpfs", "/run:rw,nosuid,nodev,size=64m",
     ]
