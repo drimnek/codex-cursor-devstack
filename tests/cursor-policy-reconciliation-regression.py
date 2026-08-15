@@ -64,6 +64,7 @@ def capture_cursor_seed_script(module, root: Path) -> str:
 
 
 def run_script(script: str, state_root: Path, seed_file: Path) -> None:
+    state_root.mkdir(parents=True, exist_ok=True)
     transformed = script.replace("/state", str(state_root)).replace(
         "/seed/cli-config.json", str(seed_file)
     )
@@ -83,13 +84,13 @@ def main() -> None:
         # Missing active config: materialize the complete seed.
         first_state = Path(td) / "first-state"
         run_script(script, first_state, seed_file)
-        first_config = first_state / ".cursor" / "cli-config.json"
+        first_config = first_state / "cli-config.json"
         assert json.loads(first_config.read_text()) == seed
         assert stat.S_IMODE(first_config.stat().st_mode) == 0o600
 
         # Existing active config: replace only platform-managed permissions.
         stale_state = Path(td) / "stale-state"
-        stale_config = stale_state / ".cursor" / "cli-config.json"
+        stale_config = stale_state / "cli-config.json"
         stale_config.parent.mkdir(parents=True)
         stale = {
             "version": 1,
