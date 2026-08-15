@@ -32,6 +32,8 @@ python3 "$ROOT/tests/cursor-policy-reconciliation-regression.py"
 python3 "$ROOT/tests/parallel-lifecycle-regression.py"
 python3 "$ROOT/tests/locking-concurrency-regression.py"
 python3 "$ROOT/tests/dependency-semantics-regression.py"
+python3 "$ROOT/tests/provider-e2e-runner-regression.py"
+"$ROOT/tests/run-cross-provider-parallel-e2e.sh"
 
 # Cursor installer layout regression: preserve the complete ~/.local tree.
 CURSOR_CF="$ROOT/platform-src/containers/Containerfile.cursor"
