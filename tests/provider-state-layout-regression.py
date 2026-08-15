@@ -170,6 +170,11 @@ def main() -> None:
                 return SimpleNamespace(returncode=0)
             if "echo bad >> /workspace/marker" in call:
                 return SimpleNamespace(returncode=1)
+            # HARD-03 expects the host-loopback probe to be rejected by the
+            # explicit slirp4netns network boundary. Model that expected
+            # connection failure rather than reporting a false security breach.
+            if any("/dev/tcp/host.containers.internal/" in part for part in call):
+                return SimpleNamespace(returncode=1)
             return SimpleNamespace(returncode=0)
 
         agentd.seed_provider_home = lambda _cfg, _provider: None

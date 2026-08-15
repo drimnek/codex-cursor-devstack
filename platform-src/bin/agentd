@@ -30,6 +30,7 @@ from pathlib import Path
 CONFIG_PATH = Path("/srv/agent-dev/platform/config/platform.json")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 ALLOWED_PROVIDERS = {"codex", "cursor"}
+PROVIDER_NETWORK_MODE = "slirp4netns:allow_host_loopback=false"
 ALLOWED_OPS = {
     "ping", "build", "auth", "status", "versions", "smoke", "run", "index",
     "project-init", "project-sync", "project-export", "project-status",
@@ -376,10 +377,11 @@ def provider_policy_mounts(cfg: dict, provider: str) -> list[str]:
     config = canonical_file(seed / "config.toml", seed, "Codex policy")
     return ["-v", f"{config}:/root/.codex/config.toml:ro"]
 
-def common_runtime_args(cfg: dict, provider: str | None, workspace: Path | None = None, *, readonly=False, reference: Path | None = None, task_meta: Path | None = None, git_common: Path | None = None) -> list[str]:
+def common_runtime_args(cfg: dict, provider: str | None, workspace: Path | None = None, *, readonly=False, reference: Path | None = None, task_meta: Path | None = None, git_common: Path | None = None, network_enabled: bool = True) -> list[str]:
     platform_root = Path(cfg["root"])
+    network_mode = PROVIDER_NETWORK_MODE if provider is not None and network_enabled else "none"
     args = [
-        "podman", "run", "--rm", "--http-proxy=false", "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
+        "podman", "run", "--rm", f"--network={network_mode}", "--http-proxy=false", "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
         f"--pids-limit={cfg['limits']['pids']}", f"--memory={cfg['limits']['memory']}", f"--cpus={cfg['limits']['cpus']}",
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m", "--tmpfs", "/run:rw,nosuid,nodev,size=64m",
     ]
@@ -930,7 +932,7 @@ def op_smoke(cfg: dict, conn: socket.socket) -> int:
         return rc
     for provider in ("codex", "cursor"):
         seed_provider_home(cfg, provider)
-        runtime = common_runtime_args(cfg, provider)
+        runtime = common_runtime_args(cfg, provider, network_enabled=False)
         target = provider_state_target(provider)
         provider_script = (
             "set -eu; "
@@ -942,11 +944,41 @@ def op_smoke(cfg: dict, conn: socket.socket) -> int:
         )
         rc = stream_noninteractive(
             conn,
-            [*runtime, "--network=none", cfg["images"][provider], "bash", "-lc", provider_script],
+            [*runtime, cfg["images"][provider], "bash", "-lc", provider_script],
         )
         if rc != 0:
             send_output(conn, f"{provider} scoped provider-state smoke failed\n".encode())
             return rc
+
+    # Provider execution requires outbound networking, but host loopback access
+    # is not part of the executor contract. Verify the explicit rootless network
+    # backend starts, then ensure a listening host-loopback socket is unreachable.
+    network_runtime = common_runtime_args(cfg, "codex")
+    rc = stream_noninteractive(
+        conn,
+        [*network_runtime, cfg["images"]["codex"], "bash", "-lc", "true"],
+    )
+    if rc != 0:
+        send_output(conn, b"provider network backend smoke failed\n")
+        return rc
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        host_port = listener.getsockname()[1]
+        probe_script = (
+            "timeout 3 bash -lc "
+            + repr(f"exec 3<>/dev/tcp/host.containers.internal/{host_port}")
+        )
+        probe = subprocess.run(
+            [*network_runtime, cfg["images"]["codex"], "bash", "-lc", probe_script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if probe.returncode == 0:
+            send_output(conn, b"provider network unexpectedly reached host loopback\n")
+            return 4
+
     smoke = Path(cfg["root"]) / "tmp" / "smoke"
     shutil.rmtree(smoke, ignore_errors=True)
     smoke.mkdir(parents=True, exist_ok=True)

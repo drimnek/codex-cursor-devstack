@@ -39,9 +39,11 @@ The source audit reports `PASS`, `WARN`, and `FAIL`.
 
 Current provider access that still requires design review is reported as
 `WARN`, including provider credential readability inside the scoped state
-directory and provider outbound network access. HARD-01 makes Podman
+directory and unrestricted outbound egress. HARD-01 makes Podman
 proxy-environment propagation an explicit invariant. HARD-02 removes persistent
-whole-home mounts and keeps only provider-specific state writable.
+whole-home mounts and keeps only provider-specific state writable. HARD-03
+fixes provider execution to `slirp4netns:allow_host_loopback=false` and keeps
+non-provider executor runtime offline with `network=none`.
 
 `tests/manual-executor-boundary-audit.sh` validates the deployed host and broker:
 
@@ -166,11 +168,21 @@ risk remains a `WARN` and is a separate hardening problem.
 ### Provider network
 
 Provider executors require outbound connectivity for model API access, so
-`network=none` is not a general solution for real provider runs.
+`network=none` is not a general solution for real provider runs. HARD-03 makes
+the rootless provider network explicit:
 
-The hardening decision should define the intended outbound network boundary and
-whether host-reachable services or other local network paths require additional
-restriction.
+```text
+slirp4netns:allow_host_loopback=false
+```
+
+The broker smoke verifies that this backend starts and that a listening host
+loopback socket cannot be reached through `host.containers.internal`. Executor
+runtime without a provider, such as local repository indexing, defaults to
+`network=none`.
+
+This does not restrict provider traffic to an allowlist of destinations. General
+outbound egress remains a reviewable warning and is a separate hardening
+problem.
 
 ### Proxy environment propagation
 
@@ -199,12 +211,12 @@ deployment drift is absent or explained       PASS
 Warnings are not considered resolved merely because the audit exits zero in
 non-strict mode. They define the inputs for the following hardening patches.
 
-After HARD-02, the expected review warnings are limited to two categories per
-provider profile:
+After HARD-03, the expected review warnings remain limited to two categories
+per provider profile:
 
 ```text
 provider credentials readable
-network
+outbound egress
 ```
 
 The previous `provider home writable` warning must be gone and a persistent

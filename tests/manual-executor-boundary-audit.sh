@@ -32,7 +32,7 @@ require_cmd() {
 }
 
 section "Host prerequisites"
-for cmd in "$AGENTCTL" python3 jq systemctl id stat getfacl; do
+for cmd in "$AGENTCTL" python3 jq systemctl id stat getfacl slirp4netns; do
   require_cmd "$cmd"
 done
 
@@ -79,7 +79,7 @@ else
 fi
 
 if "$AGENTCTL" smoke; then
-  pass "agentctl smoke (socket/credential absence, scoped provider state, and workspace ro/rw smoke)"
+  pass "agentctl smoke (socket/credential absence, scoped provider state, explicit network boundary, and workspace ro/rw smoke)"
 else
   fail "agentctl smoke"
 fi

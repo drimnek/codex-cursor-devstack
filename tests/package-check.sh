@@ -34,6 +34,7 @@ python3 "$ROOT/tests/locking-concurrency-regression.py"
 python3 "$ROOT/tests/dependency-semantics-regression.py"
 python3 "$ROOT/tests/provider-e2e-runner-regression.py"
 python3 "$ROOT/tests/provider-state-layout-regression.py"
+python3 "$ROOT/tests/executor-network-contract-regression.py"
 python3 "$ROOT/tests/executor-boundary-source-audit.py"
 "$ROOT/tests/run-cross-provider-parallel-e2e.sh"
 

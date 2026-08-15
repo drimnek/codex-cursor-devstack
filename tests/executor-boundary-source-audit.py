@@ -156,7 +156,7 @@ def make_fixture(tmp: Path) -> tuple[dict, Path, Path, Path, Path]:
     return cfg, workspace, reference, task_meta, git_common
 
 
-def audit_args(audit: Audit, provider: str, readonly: bool, args: list[str], workspace: Path) -> dict:
+def audit_args(audit: Audit, provider: str, readonly: bool, args: list[str], workspace: Path, expected_network: str | None) -> dict:
     label = f"{provider} {'RO' if readonly else 'RW'}"
     audit.require("--read-only" in args, f"{label}: rootfs read-only", "--read-only present", "--read-only missing")
     audit.require(
@@ -194,10 +194,23 @@ def audit_args(audit: Audit, provider: str, readonly: bool, args: list[str], wor
         audit.add("WARN", f"{label}: provider credentials readable", f"provider auth/config/cache under {expected_state_target} remain readable by executor processes; credential confidentiality is not solved by HARD-02")
 
     net = network_mode(args)
-    if net == "none":
-        audit.add("WARN", f"{label}: network", "network=none; provider API calls would normally require outbound connectivity")
-    else:
-        audit.add("WARN", f"{label}: network", f"network mode is {net!r}; outbound connectivity is available and should be treated as part of the provider trust boundary")
+    audit.require(
+        net == expected_network == "slirp4netns:allow_host_loopback=false",
+        f"{label}: provider network contract",
+        "explicit slirp4netns network with host loopback disabled",
+        f"unexpected provider network mode: {net!r}; expected 'slirp4netns:allow_host_loopback=false'",
+    )
+    audit.require(
+        "allow_host_loopback=false" in net,
+        f"{label}: host loopback isolation",
+        "slirp4netns host-loopback access explicitly disabled",
+        f"host-loopback isolation missing from network mode: {net!r}",
+    )
+    audit.add(
+        "WARN",
+        f"{label}: outbound egress",
+        "provider network permits general outbound connectivity; destination-level egress restriction remains a separate hardening problem",
+    )
 
     forbidden_targets = {"/var/run/docker.sock", "/run/podman/podman.sock", "/home", "/host", "/srv/agent-dev"}
     exposed = sorted(spec for spec in mounts(args) if mount_target(spec) in forbidden_targets)
@@ -252,7 +265,12 @@ def main() -> int:
                     task_meta=task_meta,
                     git_common=git_common,
                 )
-                inventory.append(audit_args(audit, provider, readonly, args, workspace))
+                inventory.append(
+                    audit_args(
+                        audit, provider, readonly, args, workspace,
+                        getattr(agentd, "PROVIDER_NETWORK_MODE", None),
+                    )
+                )
 
         audit.require(agentd.provider_volume("codex") == "agent-dev-codex-state", "Codex scoped state volume", "uses agent-dev-codex-state", f"unexpected volume: {agentd.provider_volume('codex')}")
         audit.require(agentd.provider_volume("cursor") == "agent-dev-cursor-state", "Cursor scoped state volume", "uses agent-dev-cursor-state", f"unexpected volume: {agentd.provider_volume('cursor')}")
@@ -266,6 +284,22 @@ def main() -> int:
         cursor_args = agentd.common_runtime_args(cfg, "cursor", workspace, readonly=False, reference=reference, task_meta=task_meta)
         cursor_policy = find_mount(cursor_args, "/root/.cursor/cli-config.json")
         audit.require(cursor_policy is None, "Cursor active config", "no immutable bind overlays writable Cursor active config", f"unexpected direct Cursor config bind: {cursor_policy}")
+
+        offline_args = agentd.common_runtime_args(
+            cfg,
+            None,
+            workspace,
+            readonly=True,
+            reference=reference,
+            task_meta=task_meta,
+            git_common=git_common,
+        )
+        audit.require(
+            network_mode(offline_args) == "none",
+            "Non-provider executor network",
+            "non-provider executor runtime is network=none",
+            f"non-provider executor unexpectedly has network mode {network_mode(offline_args)!r}",
+        )
 
         op_run_source = inspect.getsource(agentd.op_run)
         secret_markers = ("SSH_AUTH_SOCK", "GPG_AGENT_INFO", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
