@@ -35,6 +35,18 @@ human operator (agentdev-ops)
 
 The raw Podman API/socket is not exposed to the operator or agent containers. `agentd` accepts a fixed RPC surface and computes allowed images, workspaces, policy mounts, and provider state itself.
 
+## Architecture evolution
+
+The current `0.1.x` implementation supports Codex and Cursor directly and
+retains provider-specific execution and policy logic inside the broker.
+
+The proposed `0.2` architecture keeps the existing broker, rootless Podman,
+Git trust boundary, and task lifecycle while introducing provider-neutral
+execution policies, capability-based agent drivers, and a runtime backend
+boundary for Codex, Cursor, Copilot, Antigravity, and future agents.
+
+See [Multi-Agent Architecture v0.2](docs/multi-agent-architecture-v0.2.md).
+
 ## Trust boundary for Git
 
 Each project has two persistent checkouts:

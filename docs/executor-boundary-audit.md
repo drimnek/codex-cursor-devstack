@@ -11,6 +11,11 @@ silently accepted or immediately breaking the deterministic package suite.
 
 No Cursor or Codex model task is executed by these checks.
 
+The unresolved credential-confidentiality and task-egress findings in this
+audit are design inputs to the proposed v0.2 provider-neutral execution-policy
+model. See
+[Multi-Agent Architecture v0.2](multi-agent-architecture-v0.2.md).
+
 ## Checks
 
 `tests/executor-boundary-source-audit.py` loads the selected `agentd` source and

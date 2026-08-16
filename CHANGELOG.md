@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Add a proposed v0.2 multi-agent architecture and migration roadmap covering
+  provider-neutral policy, agent drivers, capability negotiation, runtime
+  backend separation, and staged Codex/Cursor/Copilot/Antigravity integration.
+
 ### Fixed
 
 - Preserve the full Cursor CLI installer layout under `/opt/cursor-cli`; copying only the `agent` launcher caused its Node entrypoint to lose companion files such as `index.js`.
