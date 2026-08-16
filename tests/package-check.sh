@@ -37,11 +37,18 @@ python3 "$ROOT/tests/provider-state-layout-regression.py"
 python3 "$ROOT/tests/executor-network-contract-regression.py"
 python3 "$ROOT/tests/executor-boundary-source-audit.py"
 "$ROOT/tests/run-cross-provider-parallel-e2e.sh"
-
-# Cursor installer layout regression: preserve the complete ~/.local tree.
+# Cursor installer layout regression: install directly under the immutable
+# executor prefix and preserve the installer-created launcher chain.
 CURSOR_CF="$ROOT/platform-src/containers/Containerfile.cursor"
-grep -Fq 'cp -a /root/.local/. /opt/cursor-cli/' "$CURSOR_CF"
-grep -Fq 'ln -s /opt/cursor-cli/bin/agent /usr/local/bin/agent' "$CURSOR_CF"
+grep -Fq 'HOME=/opt/cursor-cli' "$CURSOR_CF"
+grep -Fq 'test -L /opt/cursor-cli/.local/bin/agent' "$CURSOR_CF"
+grep -Fq 'test -x /opt/cursor-cli/.local/bin/agent' "$CURSOR_CF"
+grep -Fq 'test -x "$(readlink -f /opt/cursor-cli/.local/bin/agent)"' "$CURSOR_CF"
+grep -Fq 'ln -s /opt/cursor-cli/.local/bin/agent /usr/local/bin/agent' "$CURSOR_CF"
+if grep -Fq 'cp -a /root/.local/. /opt/cursor-cli/' "$CURSOR_CF"; then
+  echo "Cursor Containerfile must install directly under /opt/cursor-cli instead of relocating /root/.local." >&2
+  exit 1
+fi
 if grep -Fq 'cp /root/.local/bin/agent /usr/local/bin/agent' "$CURSOR_CF"; then
   echo "Cursor Containerfile must not copy the agent launcher without its companion installation tree." >&2
   exit 1
