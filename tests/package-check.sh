@@ -30,6 +30,7 @@ PY
 python3 "$ROOT/tests/security-regression.py"
 python3 "$ROOT/tests/cursor-policy-reconciliation-regression.py"
 python3 "$ROOT/tests/package-baseline-regression.py"
+python3 "$ROOT/tests/broker-rpc-contract-regression.py"
 python3 "$ROOT/tests/parallel-lifecycle-regression.py"
 python3 "$ROOT/tests/locking-concurrency-regression.py"
 python3 "$ROOT/tests/dependency-semantics-regression.py"

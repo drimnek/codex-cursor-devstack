@@ -224,7 +224,7 @@ def rpc(cfg: dict, request: dict, *, interactive=False) -> int:
     try:
         first = recv_line(fileobj)
         if first.get("type") == "error":
-            die(first.get("message", "agentd error"))
+            die(first.get("message", "agentd error"), int(first.get("code", 2)))
         if first.get("type") == "result":
             result = first.get("result")
             if isinstance(result, (dict, list)):
