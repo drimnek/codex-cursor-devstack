@@ -65,10 +65,12 @@ def main() -> None:
 
     assert agentd.provider_volume("codex") == "agent-dev-codex-state"
     assert agentd.provider_volume("cursor") == "agent-dev-cursor-state"
+    assert agentd.cursor_auth_volume() == "agent-dev-cursor-auth"
     assert agentd.legacy_provider_volume("codex") == "agent-dev-codex-home"
     assert agentd.legacy_provider_volume("cursor") == "agent-dev-cursor-home"
     assert agentd.provider_state_target("codex") == "/root/.codex"
     assert agentd.provider_state_target("cursor") == "/root/.cursor"
+    assert agentd.cursor_auth_target() == "/root/.config/cursor"
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -80,6 +82,8 @@ def main() -> None:
         cursor_mounts = mount_specs(cursor_args)
 
         assert "agent-dev-codex-state:/root/.codex:rw" in codex_mounts
+        assert "agent-dev-cursor-auth:/root/.config/cursor:rw" not in codex_mounts
+        assert "agent-dev-cursor-auth:/root/.config/cursor:rw" in cursor_mounts
         assert "agent-dev-cursor-state:/root/.cursor:rw" in cursor_mounts
         assert not any(spec.split(":")[1] == "/root" for spec in codex_mounts)
         assert not any(spec.split(":")[1] == "/root" for spec in cursor_mounts)
@@ -118,12 +122,15 @@ def main() -> None:
         calls.clear()
         ensured.clear()
         agentd.seed_provider_home(cfg, "cursor")
-        assert ensured == ["agent-dev-cursor-state"]
+        assert ensured == ["agent-dev-cursor-state", "agent-dev-cursor-auth"]
         migration = find_run(calls, "agent-dev-cursor-state:/state:rw")
+        assert "agent-dev-cursor-auth:/auth:rw" in migration
         assert "agent-dev-cursor-home:/legacy:ro" in migration
         cursor_migration_script = migration[-1]
         assert "/legacy/.cursor/." in cursor_migration_script
+        assert "/legacy/.config/cursor/." in cursor_migration_script
         assert ".agent-dev-state-layout-v2" in cursor_migration_script
+        assert ".agent-dev-auth-layout-v1" in cursor_migration_script
 
         reconcile_calls = [
             call for call in calls
@@ -154,6 +161,15 @@ def main() -> None:
         migration = find_run(calls, "agent-dev-codex-state:/state:rw")
         assert "agent-dev-codex-home:/legacy:ro" not in migration
         assert ".agent-dev-state-layout-v2" in migration[-1]
+        calls.clear()
+        ensured.clear()
+        agentd.seed_provider_home(cfg, "cursor")
+        assert ensured == ["agent-dev-cursor-state", "agent-dev-cursor-auth"]
+        migration = find_run(calls, "agent-dev-cursor-state:/state:rw")
+        assert "agent-dev-cursor-auth:/auth:rw" in migration
+        assert "agent-dev-cursor-home:/legacy:ro" not in migration
+        assert ".agent-dev-state-layout-v2" in migration[-1]
+        assert ".agent-dev-auth-layout-v1" in migration[-1]
 
         # Broker smoke must exercise both scoped provider-state mounts without
         # making model/API calls: direct /root writes fail, scoped state writes
@@ -191,6 +207,8 @@ def main() -> None:
             call for call in smoke_streams
             if "agent-dev-cursor-state:/root/.cursor:rw" in call
         )
+        assert "agent-dev-cursor-auth:/root/.config/cursor:rw" in cursor_smoke
+        assert "/root/.config/cursor/.agent-dev-auth-write-smoke" in cursor_smoke[-1]
         for call, target in (
             (codex_smoke, "/root/.codex/.agent-dev-state-write-smoke"),
             (cursor_smoke, "/root/.cursor/.agent-dev-state-write-smoke"),
