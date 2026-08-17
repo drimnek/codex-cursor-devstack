@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -85,11 +85,25 @@ class TaskContext:
 
 @dataclass(frozen=True, slots=True)
 class ProviderStateSpec:
-    """Neutral placeholder for a future resolved provider-state mount."""
+    """Provider-state mount description shared by driver and runtime layers."""
 
     source: str
     target: str
     read_only: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, str) or not self.source or "\x00" in self.source:
+            raise ValueError("provider state source must be a non-empty string without NUL")
+        if not isinstance(self.target, str) or not self.target or "\x00" in self.target:
+            raise ValueError("provider state target must be a non-empty string without NUL")
+        target = PurePosixPath(self.target)
+        if not target.is_absolute() or ".." in target.parts:
+            raise ValueError("provider state target must be an absolute container path without '..'")
+        if type(self.read_only) is not bool:
+            raise ValueError("provider state read_only must be boolean")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"source": self.source, "target": self.target, "read_only": self.read_only}
 
 
 @dataclass(frozen=True, slots=True)
