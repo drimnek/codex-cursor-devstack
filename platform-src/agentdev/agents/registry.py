@@ -17,6 +17,7 @@ from agentdev.agents.base import (
     RunSpec,
     VersionProbeSpec,
 )
+from agentdev.agents.codex import CodexDriver
 from agentdev.agents.state import (
     JsonFieldReconciliation,
     ProviderStateAdapter,
@@ -85,12 +86,10 @@ class AgentRegistry:
 
 
 class _LegacyBrokerDriver(AgentDriver):
-    """Identity-only bridge until provider behavior moves in DRV-003/004/005.
+    """Transitional bridge for providers whose concrete driver has not landed.
 
-    DRV-002 replaces provider enumeration only.  Returning fabricated provider
-    semantics here would make the registry look more migrated than it is, so
-    every semantic method fails closed until a concrete trusted driver replaces
-    this registration.
+    The registry owns provider identity/state metadata, but command/auth/policy
+    semantics fail closed until the provider-specific driver is extracted.
     """
 
     def __init__(
@@ -146,26 +145,6 @@ class _LegacyBrokerDriver(AgentDriver):
         return self._not_migrated()
 
 
-def _codex_state_adapter() -> ProviderStateAdapter:
-    return ProviderStateAdapter(
-        volumes=(
-            StateVolumeLayout(
-                key="state",
-                mount=ProviderStateSpec("agent-dev-codex-state", "/root/.codex"),
-                staging_target="/state",
-                marker=".agent-dev-state-layout-v2",
-                legacy_path=".codex",
-                empty_error="provider state volume is non-empty but has no layout marker",
-                smoke_marker=".agent-dev-state-write-smoke",
-                cleanup_after_copy=("config.toml",),
-            ),
-        ),
-        legacy_volume="agent-dev-codex-home",
-        policy_mounts=(
-            StatePolicyMount("config.toml", "/root/.codex/config.toml", True),
-        ),
-    )
-
 
 def _cursor_state_adapter() -> ProviderStateAdapter:
     return ProviderStateAdapter(
@@ -203,7 +182,7 @@ def build_builtin_registry() -> AgentRegistry:
     """Build the fixed trusted registry deployed with the current platform."""
     return AgentRegistry(
         (
-            _LegacyBrokerDriver("codex", "OpenAI Codex", _codex_state_adapter()),
+            CodexDriver(),
             _LegacyBrokerDriver("cursor", "Cursor", _cursor_state_adapter()),
         )
     ).freeze()

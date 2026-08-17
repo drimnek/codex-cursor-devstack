@@ -124,10 +124,11 @@ def test_builtin_registry_is_fixed_and_fail_closed() -> None:
     assert tuple(driver.id() for driver in registry.drivers()) == ("codex", "cursor")
     assert all(isinstance(driver, AgentDriver) for driver in registry.drivers())
 
-    # DRV-003 adds provider-state semantics to the trusted registrations while
-    # unrelated provider behavior remains fail-closed until concrete drivers land.
-    expect(NotImplementedError, registry.get("codex").capabilities)
-    assert registry.get("codex").state_spec()[0].target == "/root/.codex"
+    # DRV-004 replaces the Codex transition bridge with a concrete driver.
+    codex = registry.get("codex")
+    assert codex.capabilities().compatibility_modes == frozenset({"outer-only"})
+    assert codex.state_spec()[0].target == "/root/.codex"
+    assert codex.auth_spec().argv == ("codex", "login", "--device-auth")
     assert tuple(item.target for item in registry.get("cursor").state_spec()) == (
         "/root/.cursor",
         "/root/.config/cursor",
@@ -148,7 +149,7 @@ def test_registry_is_not_dynamic_plugin_loading() -> None:
     )
     for token in forbidden:
         assert token not in source, token
-    assert '_LegacyBrokerDriver("codex"' in source
+    assert "CodexDriver()" in source
     assert '_LegacyBrokerDriver("cursor"' in source
 
 

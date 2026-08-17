@@ -40,6 +40,7 @@ from agentdev.broker.rpc import (
 )
 from agentdev.core.dependencies import validate_dependencies as validate_task_dependencies
 from agentdev.core.git_handoff import INTEGRATION_BRANCH
+from agentdev.core.models import TaskContext
 from agentdev.core.locking import (
     INTEGRATION_LOCK,
     lock_one,
@@ -658,6 +659,15 @@ def capture(argv: list[str]) -> str:
     return proc.stdout.strip()
 
 
+def provider_version_argv(provider: str) -> tuple[str, ...]:
+    driver = registered_provider(provider)
+    try:
+        return driver.version_probe().argv
+    except NotImplementedError:
+        # Cursor remains broker-owned until MA2-DRV-005.
+        return ("agent", "--version")
+
+
 def write_build_lock(cfg: dict) -> dict:
     images = {}
     for key in ("base", *AGENT_REGISTRY.ids(), "intelligence"):
@@ -669,8 +679,8 @@ def write_build_lock(cfg: dict) -> dict:
             "image_id": capture(["podman", "image", "inspect", "--format", "{{.Id}}", image]),
         }
     tools = {
-        "codex": capture(["podman", "run", "--rm", cfg["images"]["codex"], "codex", "--version"]),
-        "cursor": capture(["podman", "run", "--rm", cfg["images"]["cursor"], "agent", "--version"]),
+        provider: capture(["podman", "run", "--rm", cfg["images"][provider], *provider_version_argv(provider)])
+        for provider in AGENT_REGISTRY.ids()
     }
     if "intelligence" in images:
         tools["gitnexus"] = capture(["podman", "run", "--rm", cfg["images"]["intelligence"], "gitnexus", "--version"])
@@ -714,20 +724,34 @@ def op_build(cfg: dict, conn: socket.socket) -> int:
     LOG.info("build lock images=%s", sorted(lock["images"]))
     return 0
 
+def provider_environment_args(environment: tuple[tuple[str, str], ...]) -> list[str]:
+    args: list[str] = []
+    for name, value in environment:
+        args += ["-e", f"{name}={value}"]
+    return args
+
+
 def op_auth(cfg: dict, conn: socket.socket, fileobj, provider: str) -> int:
     provider = valid_name(provider, "provider")
-    registered_provider(provider, request_error=True)
+    driver = registered_provider(provider, request_error=True)
     seed_provider_home(cfg, provider)
     runtime = common_runtime_args(cfg, provider)
-    if provider == "codex":
-        argv = [*runtime, cfg["images"][provider], "codex", "login", "--device-auth"]
-    else:
-        argv = [*runtime, "-e", "NO_OPEN_BROWSER=1", cfg["images"][provider], "agent", "login"]
+    try:
+        spec = driver.auth_spec()
+        env_args = provider_environment_args(spec.environment)
+        agent_args = list(spec.argv)
+        timeout_seconds = spec.timeout_seconds
+    except NotImplementedError:
+        # Cursor remains broker-owned until MA2-DRV-005.
+        env_args = ["-e", "NO_OPEN_BROWSER=1"]
+        agent_args = ["agent", "login"]
+        timeout_seconds = AUTH_TIMEOUT_SECONDS
+    argv = [*runtime, *env_args, cfg["images"][provider], *agent_args]
     cidfile = new_interactive_cidfile(cfg)
     argv = add_cidfile(argv, cidfile)
     send(conn, {"type": "start", "interactive": True})
     rc = stream_interactive(
-        conn, fileobj, argv, timeout_seconds=AUTH_TIMEOUT_SECONDS, cidfile=cidfile
+        conn, fileobj, argv, timeout_seconds=timeout_seconds, cidfile=cidfile
     )
     try:
         send(conn, {"type": "exit", "code": rc})
@@ -739,10 +763,18 @@ def op_auth(cfg: dict, conn: socket.socket, fileobj, provider: str) -> int:
 
 def op_status(cfg: dict, conn: socket.socket) -> int:
     for provider in AGENT_REGISTRY.ids():
+        driver = registered_provider(provider)
         seed_provider_home(cfg, provider)
         runtime = common_runtime_args(cfg, provider)
-        argv = [*runtime, cfg["images"][provider]]
-        argv += ["codex", "login", "status"] if provider == "codex" else ["agent", "status"]
+        try:
+            spec = driver.auth_status_spec()
+            env_args = provider_environment_args(spec.environment)
+            agent_args = list(spec.argv)
+        except NotImplementedError:
+            # Cursor remains broker-owned until MA2-DRV-005.
+            env_args = []
+            agent_args = ["agent", "status"]
+        argv = [*runtime, *env_args, cfg["images"][provider], *agent_args]
         send_output(conn, f"\n== {provider} ==\n".encode())
         stream_noninteractive(conn, argv)
     return 0
@@ -750,8 +782,10 @@ def op_status(cfg: dict, conn: socket.socket) -> int:
 
 def op_versions(cfg: dict, conn: socket.socket) -> int:
     for provider in AGENT_REGISTRY.ids():
-        binary = "codex" if provider == "codex" else "agent"
-        rc = stream_noninteractive(conn, ["podman", "run", "--rm", cfg["images"][provider], binary, "--version"])
+        rc = stream_noninteractive(
+            conn,
+            ["podman", "run", "--rm", cfg["images"][provider], *provider_version_argv(provider)],
+        )
         if rc != 0:
             return rc
     intelligence = cfg["images"].get("intelligence")
@@ -796,10 +830,11 @@ def op_smoke(cfg: dict, conn: socket.socket) -> int:
     # Provider execution requires outbound networking, but host loopback access
     # is not part of the executor contract. Verify the explicit rootless network
     # backend starts, then ensure a listening host-loopback socket is unreachable.
-    network_runtime = common_runtime_args(cfg, "codex")
+    network_provider = AGENT_REGISTRY.ids()[0]
+    network_runtime = common_runtime_args(cfg, network_provider)
     rc = stream_noninteractive(
         conn,
-        [*network_runtime, cfg["images"]["codex"], "bash", "-lc", "true"],
+        [*network_runtime, cfg["images"][network_provider], "bash", "-lc", "true"],
     )
     if rc != 0:
         send_output(conn, b"provider network backend smoke failed\n")
@@ -814,7 +849,7 @@ def op_smoke(cfg: dict, conn: socket.socket) -> int:
             + repr(f"exec 3<>/dev/tcp/host.containers.internal/{host_port}")
         )
         probe = subprocess.run(
-            [*network_runtime, cfg["images"]["codex"], "bash", "-lc", probe_script],
+            [*network_runtime, cfg["images"][network_provider], "bash", "-lc", probe_script],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -855,7 +890,7 @@ def op_index(cfg: dict, conn: socket.socket, req: dict) -> int:
 
 def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
     provider = req.get("provider")
-    registered_provider(provider, request_error=True)
+    driver = registered_provider(provider, request_error=True)
     project = valid_name(req.get("project"), "project")
     task = valid_name(req.get("task"), "task")
     readonly = bool(req.get("readonly", False))
@@ -863,8 +898,6 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
     prompt = req.get("prompt", "")
     if not isinstance(prompt, str) or len(prompt) > 100_000:
         raise RequestError("prompt must be a string <= 100000 characters")
-    if outer_only and provider != "codex":
-        raise RequestError("outer-only mode is Codex-only")
     rec, pp, ws = load_task(cfg, project, task)
     if not readonly and rec.get("status") != "active":
         raise RequestError("write execution is allowed only while task status is active")
@@ -874,22 +907,31 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
     runtime = common_runtime_args(cfg, provider, ws, readonly=readonly, reference=pp["reference"], task_meta=meta, git_common=git_common)
     runtime += ["-e", f"AGENT_TASK_ID={task}", "-e", f"AGENT_TASK_MODE={rec['mode']}", "-e", f"AGENT_TASK_BASE_COMMIT={rec['base_commit']}"]
     image = cfg["images"][provider]
-    if provider == "codex":
+
+    context = TaskContext(
+        project=project,
+        task=task,
+        mode=rec["mode"],
+        status=rec["status"],
+        metadata_path=meta,
+        workspace=ws,
+        record=rec,
+    )
+    try:
+        policy = driver.compile_policy({"readonly": readonly, "outer_only": outer_only})
+        run_spec = driver.create_run_spec(context, policy, prompt)
+        env_args = provider_environment_args(run_spec.environment)
+        agent_args = list(run_spec.argv)
+    except NotImplementedError:
+        # Cursor remains broker-owned until MA2-DRV-005.
         if outer_only:
-            agent_args = ["codex", "exec", "--sandbox", "danger-full-access", "-c", "approval_policy=never"]
-        elif readonly:
-            agent_args = ["codex", "exec", "--sandbox", "read-only", "-c", "approval_policy=never"]
-        else:
-            agent_args = ["codex", "exec", "--sandbox", "workspace-write", "-c", "approval_policy=never"]
-        if prompt.strip():
-            agent_args.append(prompt)
-    else:
-        # The broker has already validated and mounted this task workspace.
-        # Cursor headless execution must not stop for a second trust prompt.
+            raise RequestError("outer-only mode is Codex-only")
+        env_args = []
         agent_args = ["agent", "--trust"]
         if prompt.strip():
             agent_args.append(prompt)
-    argv = [*runtime, image, *agent_args]
+
+    argv = [*runtime, *env_args, image, *agent_args]
     lock_name = run_lock_name(task, rec)
     with lock_one(pp, lock_name, readonly):
         cidfile = new_interactive_cidfile(cfg)
