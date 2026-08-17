@@ -15,7 +15,6 @@ import json
 import logging
 import os
 import pty
-import re
 import select
 import shutil
 import signal
@@ -27,7 +26,16 @@ import time
 import uuid
 from pathlib import Path
 
-from agentdev.core.models import ProjectContext, TaskContext
+from agentdev.core.git_handoff import INTEGRATION_BRANCH
+from agentdev.core.models import TaskContext
+from agentdev.core.projects import (
+    export_agent_project,
+    initialize_agent_project,
+    project_git_status,
+    resolve_project_paths,
+    resolve_project_root,
+    synchronize_agent_project,
+)
 from agentdev.core.validation import (
     InputValidationError,
     canonical_dir,
@@ -45,7 +53,6 @@ ALLOWED_OPS = {
     "project-init", "project-sync", "project-export", "project-status",
     "task-start", "task-complete", "task-merge", "task-abort", "task-list",
 }
-INTEGRATION_BRANCH = "agent/integration"
 BRANCH_PREFIX = "agent/"
 AUTH_TIMEOUT_SECONDS = 900
 REQUEST_FIELDS = {
@@ -115,37 +122,11 @@ def validate_request_shape(req: dict) -> None:
         raise RequestError(f"unexpected RPC fields for {op}: {sorted(unknown)}")
 
 def project_root(cfg: dict, project: str) -> Path:
-    project = valid_name(project, "project")
-    context = ProjectContext.from_platform_root(Path(cfg["root"]), project)
-    projects = context.root.parent
-    candidate = context.root
-    if candidate.is_symlink():
-        raise RequestError("project root must not be a symlink")
-    root = ensure_under(candidate, projects)
-    if not root.is_dir():
-        raise RequestError(f"project does not exist: {project}")
-    return root
+    return resolve_project_root(Path(cfg["root"]), project)
 
 
 def project_paths(cfg: dict, project: str) -> dict[str, Path]:
-    root = project_root(cfg, project)
-    context = ProjectContext.from_project_root(project, root)
-
-    def subdir(path: Path, label: str) -> Path:
-        return canonical_dir(path, root, label)
-
-    return {
-        "root": root,
-        "agent": subdir(context.agent, "agent repository root"),
-        "worktrees": subdir(context.worktrees, "worktrees root"),
-        "tasks": subdir(context.tasks, "tasks root"),
-        "reference": subdir(context.reference, "reference root"),
-        "results": subdir(context.results, "results root"),
-        "runtime": subdir(context.runtime, "runtime root"),
-        "inbound": subdir(context.inbound, "inbound exchange root"),
-        "outbound": subdir(context.outbound, "outbound exchange root"),
-        "project_meta": context.project_meta,
-    }
+    return resolve_project_paths(Path(cfg["root"]), project)
 
 def read_json(path: Path, what: str) -> dict:
     try:
@@ -563,40 +544,14 @@ def stream_interactive(
 # ---- Git/project lifecycle operations (always agentdev) ---------------------
 
 def op_project_init(cfg: dict, req: dict) -> dict:
-    project = valid_name(req.get("project"), "project")
-    bundle_name = valid_name(req.get("bundle"), "bundle")
-    root = project_root(cfg, project)
-    repo_root = canonical_dir(root / "repo", root, "repository namespace")
-    inbound = canonical_dir(root / "exchange/inbound", root, "inbound exchange root")
-    meta_path = canonical_file(root / "project.json", root, "project metadata")
-    meta = read_json(meta_path, "project metadata")
-    main_branch = valid_git_branch(meta.get("main_branch"), "main branch")
-    created_from = meta.get("created_from")
-    if not isinstance(created_from, str) or not re.fullmatch(r"[0-9a-fA-F]{40,64}", created_from):
-        raise ValueError("project metadata has invalid created_from commit")
-    bundle = canonical_file(inbound / bundle_name, inbound, "inbound bundle")
-    agent = repo_root / "agent"
-    if agent.is_symlink() or agent.exists():
-        raise RequestError("agent repository already exists")
-
-    try:
-        agent.mkdir(mode=0o700)
-        git(agent, "init", "-q")
-        git(agent, "bundle", "verify", bundle)
-        git(agent, "fetch", bundle, f"refs/heads/{main_branch}:refs/heads/{INTEGRATION_BRANCH}")
-        git(agent, "switch", INTEGRATION_BRANCH)
-        git(agent, "config", "user.name", "AI Development Agent")
-        git(agent, "config", "user.email", "agent@localhost")
-        git(agent, "config", "commit.gpgSign", "false")
-        head = git_text(agent, "rev-parse", "HEAD")
-        if head != created_from:
-            raise RequestError("initial bundle HEAD does not match project metadata")
-    except Exception:
-        shutil.rmtree(agent, ignore_errors=True)
-        raise
-
-    bundle.unlink()
-    return {"project": project, "integration_branch": INTEGRATION_BRANCH, "integration_head": head}
+    return initialize_agent_project(
+        Path(cfg["root"]),
+        req.get("project"),
+        req.get("bundle"),
+        read_json=read_json,
+        git=git,
+        git_text=git_text,
+    )
 
 
 def op_project_sync(cfg: dict, req: dict) -> dict:
@@ -607,51 +562,32 @@ def op_project_sync(cfg: dict, req: dict) -> dict:
     records = task_records(pp)
     if active_sequential(records) or pending_parallel(records):
         raise RequestError("cannot sync while tasks are active or parallel tasks await merge")
-    meta_path = canonical_file(pp["project_meta"], pp["root"], "project metadata")
-    meta = read_json(meta_path, "project metadata")
-    main_branch = valid_git_branch(meta.get("main_branch"), "main branch")
-    bundle = canonical_file(pp["inbound"] / bundle_name, pp["inbound"], "inbound bundle")
 
     with lock_one(pp, "integration", False):
-        ensure_clean(pp["agent"], "repo/agent")
-        git(pp["agent"], "bundle", "verify", bundle)
-        inbound_ref = f"refs/remotes/human-main/{main_branch}"
-        git(pp["agent"], "fetch", bundle, f"refs/heads/{main_branch}:{inbound_ref}")
-        git(pp["agent"], "switch", INTEGRATION_BRANCH)
-        integration = git_text(pp["agent"], "rev-parse", INTEGRATION_BRANCH)
-        human = git_text(pp["agent"], "rev-parse", inbound_ref)
-        if integration == human:
-            action = "already-synchronized"
-        elif git(pp["agent"], "merge-base", "--is-ancestor", integration, human, check=False).returncode == 0:
-            git(pp["agent"], "merge", "--ff-only", inbound_ref)
-            action = "fast-forwarded"
-        elif git(pp["agent"], "merge-base", "--is-ancestor", human, integration, check=False).returncode == 0:
-            action = "integration-ahead"
-        else:
-            raise RequestError("human main and agent/integration diverged; explicit human resolution is required")
-        head = git_text(pp["agent"], "rev-parse", "HEAD")
-    bundle.unlink()
-    return {"project": project, "action": action, "integration_head": head}
+        return synchronize_agent_project(
+            Path(cfg["root"]),
+            project,
+            bundle_name,
+            read_json=read_json,
+            git=git,
+            git_text=git_text,
+        )
 
 
 def op_project_export(cfg: dict, req: dict) -> dict:
     project = valid_name(req.get("project"), "project")
     pp = project_paths(cfg, project)
     ensure_git_repo(pp["agent"], "repo/agent")
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    name = f"agent-integration-{stamp}-{os.getpid()}.bundle"
-    tmp = pp["outbound"] / f".{name}.tmp"
-    final = pp["outbound"] / name
     with lock_one(pp, "integration", True):
-        ensure_clean(pp["agent"], "repo/agent")
-        head = git_text(pp["agent"], "rev-parse", INTEGRATION_BRANCH)
-        git(pp["agent"], "bundle", "create", tmp, INTEGRATION_BRANCH)
-        os.replace(tmp, final)
-        os.chmod(final, 0o640)
+        result = export_agent_project(
+            Path(cfg["root"]),
+            project,
+            git=git,
+            git_text=git_text,
+        )
     # Named group ACL is needed because agentdev intentionally is not in ops_group.
-    subprocess.run(["setfacl", "-m", f"g:{cfg['ops_group']}:r", str(final)], check=True)
-    return {"project": project, "bundle": str(final), "integration_head": head}
-
+    subprocess.run(["setfacl", "-m", f"g:{cfg['ops_group']}:r", result["bundle"]], check=True)
+    return result
 
 def validate_dependencies(pp: dict[str, Path], dependencies: list[str], base_commit: str) -> None:
     for dep in dependencies:
@@ -807,15 +743,9 @@ def op_task_list(cfg: dict, req: dict) -> list[dict]:
 def op_project_status(cfg: dict, req: dict) -> dict:
     project = valid_name(req.get("project"), "project")
     pp = project_paths(cfg, project)
-    ensure_git_repo(pp["agent"], "repo/agent")
     with lock_one(pp, "integration", True):
-        return {
-            "project": project,
-            "branch": git_text(pp["agent"], "branch", "--show-current"),
-            "head": git_text(pp["agent"], "rev-parse", "HEAD"),
-            "clean": not bool(git_text(pp["agent"], "status", "--porcelain")),
-            "tasks": task_records(pp),
-        }
+        status = project_git_status(pp["agent"], git_text=git_text)
+        return {"project": project, **status, "tasks": task_records(pp)}
 
 
 # ---- Runtime/provider operations -------------------------------------------

@@ -23,12 +23,12 @@ import threading
 import tty
 from pathlib import Path
 
-from agentdev.core.models import ProjectContext
+from agentdev.core.git_handoff import INTEGRATION_BRANCH, create_bundle
+from agentdev.core.projects import controller_project_paths
 from agentdev.core.validation import is_valid_name
 
 CONFIG_PATH = Path("/srv/agent-dev/platform/config/platform.json")
 BRANCH_PREFIX = "agent/"
-INTEGRATION_BRANCH = "agent/integration"
 
 
 def die(msg: str, code: int = 2) -> None:
@@ -67,8 +67,7 @@ def require_operator(cfg: dict) -> None:
 
 def project_paths(cfg: dict, project: str) -> dict[str, Path]:
     project = check_name(project, "project")
-    context = ProjectContext.from_platform_root(Path(cfg["root"]), project)
-    return context.controller_paths()
+    return controller_project_paths(Path(cfg["root"]), project)
 
 
 def task_meta_path(pp: dict[str, Path], task: str) -> Path:
@@ -386,13 +385,13 @@ def cmd_project_init(cfg: dict, args) -> None:
     }
     write_json(pp["project_meta"], meta, cfg, agent_read=True)
 
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    name = f"project-init-{stamp}-{os.getpid()}.bundle"
-    tmp = pp["inbound"] / f".{name}.tmp"
-    final = pp["inbound"] / name
-    run(["git", "-C", pp["main"], "bundle", "create", tmp, main_branch])
-    os.replace(tmp, final)
-    os.chmod(final, 0o640)
+    name, final = create_bundle(
+        pp["main"],
+        main_branch,
+        pp["inbound"],
+        "project-init",
+        git=git,
+    )
     run(["setfacl", "-m", f"u:{cfg['agent_user']}:r", final])
 
     rc = rpc(cfg, {"op": "project-init", "project": project, "bundle": name})
@@ -428,13 +427,13 @@ def cmd_project_sync(cfg: dict, args) -> None:
     if current_branch != main_branch:
         die(f"repo/main is on {current_branch!r}; expected {main_branch!r}")
 
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    name = f"human-main-{stamp}-{os.getpid()}.bundle"
-    tmp = pp["inbound"] / f".{name}.tmp"
-    final = pp["inbound"] / name
-    run(["git", "-C", pp["main"], "bundle", "create", tmp, main_branch])
-    os.replace(tmp, final)
-    os.chmod(final, 0o640)
+    name, final = create_bundle(
+        pp["main"],
+        main_branch,
+        pp["inbound"],
+        "human-main",
+        git=git,
+    )
     run(["setfacl", "-m", f"u:{cfg['agent_user']}:r", final])
     rc = rpc(cfg, {"op": "project-sync", "project": project, "bundle": name})
     if rc != 0:
