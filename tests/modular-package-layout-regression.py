@@ -54,6 +54,7 @@ def main() -> None:
     codex_driver = PACKAGE / "agents" / "codex.py"
     cursor_driver = PACKAGE / "agents" / "cursor.py"
     execution_plan = PACKAGE / "execution" / "plan.py"
+    runtime_backend_base = PACKAGE / "runtime" / "base.py"
     assert daemon_impl.is_file()
     assert cli_impl.is_file()
     assert rpc_impl.is_file()
@@ -71,6 +72,7 @@ def main() -> None:
     assert codex_driver.is_file()
     assert cursor_driver.is_file()
     assert execution_plan.is_file()
+    assert runtime_backend_base.is_file()
 
     for entrypoint in (PLATFORM / "bin" / "agentd", PLATFORM / "bin" / "agentctl"):
         source = entrypoint.read_text(encoding="utf-8")
@@ -108,6 +110,7 @@ def main() -> None:
         from agentdev.agents.state import ProviderStateAdapter
         from agentdev.broker import cli, daemon, rpc
         from agentdev.execution.plan import ResolvedExecutionPlan
+        from agentdev.runtime.base import RuntimeBackend, RuntimeControl, RuntimeResult
 
         assert inspect.isabstract(AgentDriver)
         assert AgentCapabilities(frozenset({"readonly"}))
@@ -121,6 +124,9 @@ def main() -> None:
         assert hasattr(cli, "main") and hasattr(cli, "parser")
         assert hasattr(rpc, "handle_request") and hasattr(rpc, "BrokerOperations")
         assert ResolvedExecutionPlan.__module__ == "agentdev.execution.plan"
+        assert inspect.isabstract(RuntimeBackend)
+        assert RuntimeControl("cancel").kind == "cancel"
+        assert RuntimeResult(0).exit_code == 0
     finally:
         sys.path.pop(0)
 
