@@ -1,6 +1,6 @@
 # Modular Package Layout
 
-Status: **Implemented through MA2-CORE-006**
+Status: **CORE and AgentDriver phases implemented through MA2-DRV-006**
 
 This document records the implemented Python package and compatibility-entrypoint
 boundary after the completed CORE extraction series.
@@ -10,10 +10,11 @@ behavior while moving provider-neutral lifecycle and RPC responsibilities behind
 package-level APIs.
 
 The provider-neutral AgentDriver contract, trusted in-tree AgentRegistry, provider
-state adapters, and concrete Codex/Cursor reference drivers are now implemented
-through `MA2-DRV-005`. Provider-native authentication, version probes, state
-metadata, configuration reconciliation, and run-command construction are owned
-by the drivers rather than generic broker operations.
+state adapters, concrete Codex/Cursor reference drivers, and fake-driver
+extensibility proof are implemented through `MA2-DRV-006`. Provider-native
+authentication, version probes, state metadata, configuration reconciliation,
+and run-command construction are owned by drivers rather than generic broker
+operations.
 
 Podman execution, execution-plan construction, and provider-neutral policy
 resolution remain later migration stages described in
@@ -192,6 +193,13 @@ own their provider CLI authentication/status/version/run syntax and their
 provider-specific state/configuration semantics. The drivers remain
 declarative and do not invoke Podman or own project/task lifecycle behavior.
 
+`MA2-DRV-006` adds no production driver. Its fake driver exists only in
+`tests/fake-driver-extensibility-regression.py` and proves that a provider with
+an unrelated state target, executable, version probe, authentication command,
+and minimal capability set can be registered temporarily and consumed by
+generic broker paths. No fake-provider identifier or command is present in the
+production registry or project/task/Git/runtime modules.
+
 ## Responsibilities still in the broker daemon
 
 After concrete Codex/Cursor driver extraction, `agentdev/broker/daemon.py`
@@ -247,6 +255,12 @@ tests/project-git-handoff-regression.py
 tests/task-lifecycle-core-regression.py
 tests/locking-service-regression.py
 tests/broker-rpc-server-regression.py
+tests/agent-driver-contract-regression.py
+tests/agent-registry-regression.py
+tests/codex-driver-regression.py
+tests/cursor-driver-regression.py
+tests/provider-state-driver-regression.py
+tests/fake-driver-extensibility-regression.py
 ```
 
 They complement the frozen characterization and security tests, including:
@@ -297,19 +311,27 @@ refactored broker.
 
 ## Next extraction boundary
 
-The completed CORE series plus concrete Codex/Cursor drivers provide the
-foundation for the final driver-architecture proof:
+The completed CORE and AgentDriver phases provide the provider-neutral domain,
+RPC, driver-contract, trusted-registry, concrete reference-driver, and tested
+third-provider extensibility foundation.
+
+The next implementation boundary is:
 
 ```text
-MA2-DRV-006
-    fake third-provider driver
-    different state target
-    different executable/version/auth commands
-    generic status/version/run-spec path
+MA2-RT-001 — ResolvedExecutionPlan
+
+agent ID
+image and command
+environment and interaction mode
+workspace/reference/task metadata mounts
+provider state and policy artifacts
+resource/network requirements
+read-only/read-write mode
+security/capability placeholders
 ```
 
-After that regression passes, the next chapter is runtime backend extraction,
-beginning with `MA2-RT-001 — Define ResolvedExecutionPlan`.
+Provider drivers must continue to describe provider semantics without taking
+ownership of raw project authorization or Podman execution.
 
 The next-stage extraction rule is:
 

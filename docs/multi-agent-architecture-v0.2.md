@@ -1157,7 +1157,7 @@ plus the CORE-specific deterministic regressions.
 
 # Phase 2 — AgentDriver Contract
 
-Status: **In progress — MA2-DRV-001 through MA2-DRV-005 complete; MA2-DRV-006 next**
+Status: **Complete — MA2-DRV-001 through MA2-DRV-006**
 
 ## Objective
 
@@ -1205,9 +1205,9 @@ ALLOWED_PROVIDERS
 
 with the trusted agent registry.
 
-### Current implementation checkpoint
+### Implementation outcome
 
-`MA2-DRV-001` through `MA2-DRV-005` are implemented:
+`MA2-DRV-001` through `MA2-DRV-006` are complete:
 
 - the provider-neutral `AgentDriver`, capability, state, authentication,
   version, installation, policy-artifact, and run-spec contracts are defined;
@@ -1218,16 +1218,21 @@ with the trusted agent registry.
   outer-only compatibility, and Codex state/config metadata;
 - `CursorDriver` owns Cursor auth/status/version, `agent --trust` run
   construction, split state/auth volumes, and `permissions` reconciliation
-  metadata.
+  metadata;
+- the test-only fake-driver regression proves a third provider with a different
+  executable, state target, auth command, version probe, and minimal capability
+  set can use generic broker state/status/version/auth/run-spec paths without
+  modifying production broker, project/task/Git core, or runtime source.
+
+The fake driver is not registered or shipped as a production provider.
 
 The broker no longer needs transitional provider-command fallbacks for Codex or
 Cursor. Podman construction, resource/network/mount enforcement, process/PTY
 handling, and generic state-migration execution remain broker/runtime concerns
-until Phase 3.
+for Phase 3.
 
-Next: `MA2-DRV-006` adds a fake-driver extensibility regression proving that a
-third provider shape can pass generic broker status/version/run-spec flows
-without modifications to project/task/Git/runtime core.
+Next: `MA2-RT-001` defines `ResolvedExecutionPlan`, the validated boundary
+between driver-produced provider semantics and runtime execution.
 
 ### Exit Criteria
 
