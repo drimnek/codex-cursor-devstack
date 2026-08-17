@@ -49,6 +49,7 @@ def main() -> None:
     core_worktrees = PACKAGE / "core" / "worktrees.py"
     core_locking = PACKAGE / "core" / "locking.py"
     agent_driver_base = PACKAGE / "agents" / "base.py"
+    agent_registry = PACKAGE / "agents" / "registry.py"
     assert daemon_impl.is_file()
     assert cli_impl.is_file()
     assert rpc_impl.is_file()
@@ -61,6 +62,7 @@ def main() -> None:
     assert core_worktrees.is_file()
     assert core_locking.is_file()
     assert agent_driver_base.is_file()
+    assert agent_registry.is_file()
 
     for entrypoint in (PLATFORM / "bin" / "agentd", PLATFORM / "bin" / "agentctl"):
         source = entrypoint.read_text(encoding="utf-8")
@@ -92,11 +94,14 @@ def main() -> None:
     sys.path.insert(0, str(PLATFORM))
     try:
         from agentdev.agents.base import AgentCapabilities, AgentDriver, RunSpec
+        from agentdev.agents.registry import AgentRegistry, BUILTIN_AGENT_REGISTRY
         from agentdev.broker import cli, daemon, rpc
 
         assert inspect.isabstract(AgentDriver)
         assert AgentCapabilities(frozenset({"readonly"}))
         assert RunSpec(("agent",)).argv == ("agent",)
+        assert isinstance(BUILTIN_AGENT_REGISTRY, AgentRegistry)
+        assert BUILTIN_AGENT_REGISTRY.ids() == ("codex", "cursor")
         assert hasattr(daemon, "main") and hasattr(daemon, "handle")
         assert hasattr(cli, "main") and hasattr(cli, "parser")
         assert hasattr(rpc, "handle_request") and hasattr(rpc, "BrokerOperations")

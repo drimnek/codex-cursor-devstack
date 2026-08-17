@@ -25,6 +25,7 @@ import time
 import uuid
 from pathlib import Path
 
+from agentdev.agents.registry import BUILTIN_AGENT_REGISTRY, UnknownAgentError
 from agentdev.broker.rpc import (
     ALLOWED_OPS,
     REQUEST_FIELDS,
@@ -79,7 +80,7 @@ from agentdev.core.tasks import (
 from agentdev.core.worktrees import BRANCH_PREFIX
 
 CONFIG_PATH = Path("/srv/agent-dev/platform/config/platform.json")
-ALLOWED_PROVIDERS = {"codex", "cursor"}
+AGENT_REGISTRY = BUILTIN_AGENT_REGISTRY
 PROVIDER_NETWORK_MODE = "slirp4netns:allow_host_loopback=false"
 AUTH_TIMEOUT_SECONDS = 900
 
@@ -89,6 +90,15 @@ LOG = logging.getLogger("agentd")
 
 # Compatibility name retained for the frozen broker RPC contract.
 RequestError = InputValidationError
+
+
+def registered_provider(provider: object, *, request_error: bool = False):
+    """Resolve a trusted driver while preserving frozen broker error messages."""
+    try:
+        return AGENT_REGISTRY.get(provider)
+    except UnknownAgentError as exc:
+        error_type = RequestError if request_error else ValueError
+        raise error_type("unsupported provider") from exc
 
 
 def load_config() -> dict:
@@ -167,8 +177,7 @@ def legacy_provider_volume(provider: str) -> str:
 
 
 def provider_state_dir(provider: str) -> str:
-    if provider not in ALLOWED_PROVIDERS:
-        raise ValueError("unsupported provider")
+    registered_provider(provider)
     return ".codex" if provider == "codex" else ".cursor"
 
 
@@ -184,8 +193,7 @@ def provider_seed_dir(cfg: dict, provider: str) -> Path:
 
 def prepare_provider_state(cfg: dict, provider: str) -> None:
     """Create scoped provider state and migrate legacy whole-home state once."""
-    if provider not in ALLOWED_PROVIDERS:
-        raise ValueError("unsupported provider")
+    registered_provider(provider)
     vol = provider_volume(provider)
     ensure_volume(vol)
     auth_vol = cursor_auth_volume() if provider == "cursor" else None
@@ -291,8 +299,7 @@ def common_runtime_args(cfg: dict, provider: str | None, workspace: Path | None 
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m", "--tmpfs", "/run:rw,nosuid,nodev,size=64m",
     ]
     if provider is not None:
-        if provider not in ALLOWED_PROVIDERS:
-            raise ValueError("unsupported provider")
+        registered_provider(provider)
         args += ["-v", f"{provider_volume(provider)}:{provider_state_target(provider)}:rw"]
         if provider == "cursor":
             args += ["-v", f"{cursor_auth_volume()}:{cursor_auth_target()}:rw"]
@@ -624,7 +631,7 @@ def capture(argv: list[str]) -> str:
 
 def write_build_lock(cfg: dict) -> dict:
     images = {}
-    for key in ("base", "codex", "cursor", "intelligence"):
+    for key in ("base", *AGENT_REGISTRY.ids(), "intelligence"):
         image = cfg["images"].get(key)
         if not image or subprocess.run(["podman", "image", "exists", image], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
             continue
@@ -659,8 +666,8 @@ def op_build(cfg: dict, conn: socket.socket) -> int:
         rc = stream_noninteractive(conn, list(map(str, argv)))
         if rc != 0:
             return rc
-    seed_provider_home(cfg, "codex")
-    seed_provider_home(cfg, "cursor")
+    for provider in AGENT_REGISTRY.ids():
+        seed_provider_home(cfg, provider)
 
     intelligence = cfg["images"].get("intelligence")
     if intelligence:
@@ -680,8 +687,7 @@ def op_build(cfg: dict, conn: socket.socket) -> int:
 
 def op_auth(cfg: dict, conn: socket.socket, fileobj, provider: str) -> int:
     provider = valid_name(provider, "provider")
-    if provider not in ALLOWED_PROVIDERS:
-        raise RequestError("unsupported provider")
+    registered_provider(provider, request_error=True)
     seed_provider_home(cfg, provider)
     runtime = common_runtime_args(cfg, provider)
     if provider == "codex":
@@ -703,7 +709,7 @@ def op_auth(cfg: dict, conn: socket.socket, fileobj, provider: str) -> int:
 
 
 def op_status(cfg: dict, conn: socket.socket) -> int:
-    for provider in ("codex", "cursor"):
+    for provider in AGENT_REGISTRY.ids():
         seed_provider_home(cfg, provider)
         runtime = common_runtime_args(cfg, provider)
         argv = [*runtime, cfg["images"][provider]]
@@ -714,7 +720,7 @@ def op_status(cfg: dict, conn: socket.socket) -> int:
 
 
 def op_versions(cfg: dict, conn: socket.socket) -> int:
-    for provider in ("codex", "cursor"):
+    for provider in AGENT_REGISTRY.ids():
         binary = "codex" if provider == "codex" else "agent"
         rc = stream_noninteractive(conn, ["podman", "run", "--rm", cfg["images"][provider], binary, "--version"])
         if rc != 0:
@@ -727,7 +733,7 @@ def op_versions(cfg: dict, conn: socket.socket) -> int:
 
 def op_smoke(cfg: dict, conn: socket.socket) -> int:
     image = cfg["images"]["base"]
-    for key in ("base", "codex", "cursor"):
+    for key in ("base", *AGENT_REGISTRY.ids()):
         if subprocess.run(["podman", "image", "exists", cfg["images"][key]]).returncode != 0:
             send_output(conn, f"missing image {cfg['images'][key]}\n".encode())
             return 2
@@ -735,7 +741,7 @@ def op_smoke(cfg: dict, conn: socket.socket) -> int:
     rc = stream_noninteractive(conn, ["podman", "run", "--rm", "--read-only", "--network=none", "--cap-drop=all", "--security-opt=no-new-privileges", "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m", image, "bash", "-lc", script])
     if rc != 0:
         return rc
-    for provider in ("codex", "cursor"):
+    for provider in AGENT_REGISTRY.ids():
         seed_provider_home(cfg, provider)
         runtime = common_runtime_args(cfg, provider, network_enabled=False)
         writable_targets = [
@@ -824,8 +830,7 @@ def op_index(cfg: dict, conn: socket.socket, req: dict) -> int:
 
 def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
     provider = req.get("provider")
-    if provider not in ALLOWED_PROVIDERS:
-        raise RequestError("unsupported provider")
+    registered_provider(provider, request_error=True)
     project = valid_name(req.get("project"), "project")
     task = valid_name(req.get("task"), "task")
     readonly = bool(req.get("readonly", False))
