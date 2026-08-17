@@ -304,7 +304,8 @@ def check_run_contract() -> None:
     originals = {
         "load_task": agentd.load_task,
         "seed_provider_home": agentd.seed_provider_home,
-        "common_runtime_args": agentd.common_runtime_args,
+        "create_run_execution_plan": agentd.create_run_execution_plan,
+        "execution_plan_argv": agentd.execution_plan_argv,
         "lock_one": agentd.lock_one,
         "new_interactive_cidfile": agentd.new_interactive_cidfile,
         "stream_interactive": agentd.stream_interactive,
@@ -337,31 +338,28 @@ def check_run_contract() -> None:
             )
             agentd.seed_provider_home = lambda _cfg, _provider: None
 
-            def fake_runtime(
-                _cfg,
-                provider,
-                ws,
-                *,
-                readonly=False,
-                reference=None,
-                task_meta=None,
-                git_common=None,
-                network_enabled=True,
+            def fake_create_plan(
+                cfg, provider, context, run_spec, *, readonly, outer_only, reference, git_common
             ):
-                calls.append(
-                    {
-                        "provider": provider,
-                        "workspace": ws,
-                        "readonly": readonly,
-                        "reference": reference,
-                        "task_meta": task_meta,
-                        "git_common": git_common,
-                        "network_enabled": network_enabled,
-                    }
+                plan = SimpleNamespace(
+                    provider=provider,
+                    context=context,
+                    run_spec=run_spec,
+                    readonly=readonly,
+                    outer_only=outer_only,
+                    reference=reference,
+                    git_common=git_common,
+                    image=cfg["images"][provider],
+                    interaction_mode="interactive",
                 )
-                return ["podman", "run", "--rm"]
+                calls.append(plan)
+                return plan
 
-            agentd.common_runtime_args = fake_runtime
+            def fake_plan_argv(plan):
+                return ["podman", "run", "--rm", plan.image, *plan.run_spec.argv]
+
+            agentd.create_run_execution_plan = fake_create_plan
+            agentd.execution_plan_argv = fake_plan_argv
             agentd.lock_one = lambda *_args, **_kwargs: contextlib.nullcontext()
             agentd.new_interactive_cidfile = lambda _cfg: Path("/tmp/agentd-rpc-contract.cid")
             captured_argv: list[list[str]] = []
@@ -383,7 +381,7 @@ def check_run_contract() -> None:
                 {"type": "start", "interactive": True},
                 {"type": "exit", "code": 0},
             ]
-            assert calls[-1]["readonly"] is False
+            assert calls[-1].readonly is False
             argv = captured_argv[-1]
             assert "--sandbox" in argv
             assert argv[argv.index("--sandbox") + 1] == "workspace-write"
@@ -413,7 +411,7 @@ def check_run_contract() -> None:
                     "readonly": True,
                 },
             ) == 0
-            assert calls[-1]["readonly"] is True
+            assert calls[-1].readonly is True
             argv = captured_argv[-1]
             assert argv[argv.index("--sandbox") + 1] == "read-only"
 

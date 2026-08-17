@@ -9,6 +9,7 @@ import io
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 PLATFORM = ROOT / "platform-src"
@@ -266,7 +267,18 @@ def test_generic_auth_and_run_consume_fake_specs() -> None:
             AGENT_REGISTRY=fake_registry(),
             load_task=lambda _cfg, _project, _task: (rec, pp, Path("/workspace")),
             seed_provider_home=lambda _cfg, _provider: None,
-            common_runtime_args=lambda _cfg, provider, *_args, **_kwargs: ["runtime", provider],
+            create_run_execution_plan=lambda cfg, provider, context, run_spec, **kwargs: SimpleNamespace(
+                provider=provider,
+                image=cfg["images"][provider],
+                context=context,
+                run_spec=run_spec,
+                interaction_mode="interactive",
+            ),
+            execution_plan_argv=lambda plan: [
+                "runtime", plan.provider,
+                *[item for name, value in plan.run_spec.environment for item in ("-e", f"{name}={value}")],
+                plan.image, *plan.run_spec.argv,
+            ],
             new_interactive_cidfile=lambda _cfg: cidfile,
             add_cidfile=lambda argv, _cidfile: argv,
             send=lambda _conn, frame: frames.append(frame),

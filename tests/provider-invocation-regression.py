@@ -352,7 +352,8 @@ def check_run_invocations() -> None:
     originals = {
         "load_task": agentd.load_task,
         "seed_provider_home": agentd.seed_provider_home,
-        "common_runtime_args": agentd.common_runtime_args,
+        "create_run_execution_plan": agentd.create_run_execution_plan,
+        "execution_plan_argv": agentd.execution_plan_argv,
         "lock_one": agentd.lock_one,
         "new_interactive_cidfile": agentd.new_interactive_cidfile,
         "add_cidfile": agentd.add_cidfile,
@@ -381,7 +382,7 @@ def check_run_invocations() -> None:
             "reference": reference,
             "agent": agent_repo,
         }
-        runtime_calls: list[dict] = []
+        plan_calls: list[dict] = []
         invocations: list[list[str]] = []
         seeded: list[str] = []
 
@@ -394,31 +395,35 @@ def check_run_invocations() -> None:
                 lambda _cfg, provider: seeded.append(provider)
             )
 
-            def fake_runtime(
-                _cfg,
-                provider,
-                ws,
-                *,
-                readonly=False,
-                reference=None,
-                task_meta=None,
-                git_common=None,
-                network_enabled=True,
+            def fake_create_plan(
+                cfg, provider, context, run_spec, *, readonly, outer_only, reference, git_common
             ):
-                runtime_calls.append(
-                    {
-                        "provider": provider,
-                        "workspace": ws,
-                        "readonly": readonly,
-                        "reference": reference,
-                        "task_meta": task_meta,
-                        "git_common": git_common,
-                        "network_enabled": network_enabled,
-                    }
+                plan = SimpleNamespace(
+                    provider=provider,
+                    context=context,
+                    run_spec=run_spec,
+                    readonly=readonly,
+                    outer_only=outer_only,
+                    reference=reference,
+                    git_common=git_common,
+                    image=cfg["images"][provider],
+                    interaction_mode="interactive",
                 )
-                return ["podman", "run", "--rm", f"--provider={provider}"]
+                plan_calls.append(plan)
+                return plan
 
-            agentd.common_runtime_args = fake_runtime
+            def fake_plan_argv(plan):
+                context = plan.context
+                return [
+                    "podman", "run", "--rm", f"--provider={plan.provider}",
+                    "-e", f"AGENT_TASK_ID={context.task}",
+                    "-e", f"AGENT_TASK_MODE={context.mode}",
+                    "-e", f"AGENT_TASK_BASE_COMMIT={context.record['base_commit']}",
+                    plan.image, *plan.run_spec.argv,
+                ]
+
+            agentd.create_run_execution_plan = fake_create_plan
+            agentd.execution_plan_argv = fake_plan_argv
             agentd.lock_one = lambda *_args, **_kwargs: contextlib.nullcontext()
             agentd.new_interactive_cidfile = (
                 lambda _cfg: Path("/tmp/provider-invocation.cid")
@@ -453,7 +458,7 @@ def check_run_invocations() -> None:
                     },
                 )
                 assert rc == 0
-                return invocations[-1], runtime_calls[-1]
+                return invocations[-1], plan_calls[-1]
 
             argv, runtime = run("codex")
             assert argv[-7:] == [
@@ -462,7 +467,7 @@ def check_run_invocations() -> None:
                 "--sandbox", "workspace-write",
                 "-c", "approval_policy=never",
             ]
-            assert runtime["readonly"] is False
+            assert runtime.readonly is False
 
             argv, runtime = run("codex", readonly=True)
             assert argv[-7:] == [
@@ -471,7 +476,7 @@ def check_run_invocations() -> None:
                 "--sandbox", "read-only",
                 "-c", "approval_policy=never",
             ]
-            assert runtime["readonly"] is True
+            assert runtime.readonly is True
 
             argv, _runtime = run("codex", outer_only=True)
             assert argv[-7:] == [
@@ -486,13 +491,13 @@ def check_run_invocations() -> None:
 
             argv, runtime = run("cursor")
             assert argv[-3:] == ["cursor-image", "agent", "--trust"]
-            assert runtime["readonly"] is False
+            assert runtime.readonly is False
 
             argv, runtime = run("cursor", readonly=True, prompt="review this")
             assert argv[-4:] == [
                 "cursor-image", "agent", "--trust", "review this",
             ]
-            assert runtime["readonly"] is True
+            assert runtime.readonly is True
 
             for argv in invocations:
                 assert "-e" in argv
@@ -500,12 +505,11 @@ def check_run_invocations() -> None:
                 assert "AGENT_TASK_MODE=integration" in argv
                 assert "AGENT_TASK_BASE_COMMIT=0123456789abcdef" in argv
 
-            for runtime in runtime_calls:
-                assert runtime["workspace"] == workspace
-                assert runtime["reference"] == reference
-                assert runtime["task_meta"] == meta
-                assert runtime["git_common"] is None
-                assert runtime["network_enabled"] is True
+            for plan in plan_calls:
+                assert plan.context.workspace == workspace
+                assert plan.context.metadata_path == meta
+                assert plan.reference == reference
+                assert plan.git_common is None
 
             assert seeded == [
                 "codex",

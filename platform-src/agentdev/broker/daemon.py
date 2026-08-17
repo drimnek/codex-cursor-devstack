@@ -26,7 +26,16 @@ import time
 import uuid
 from pathlib import Path, PurePosixPath
 
+from agentdev.agents.base import RunSpec
 from agentdev.agents.registry import BUILTIN_AGENT_REGISTRY, UnknownAgentError
+from agentdev.execution.plan import (
+    ExecutionMount,
+    NetworkRuntimeRequirements,
+    ResolvedExecutionPlan,
+    ResolvedProviderPolicyArtifacts,
+    ResourceLimits,
+)
+
 from agentdev.broker.rpc import (
     ALLOWED_OPS,
     REQUEST_FIELDS,
@@ -351,6 +360,142 @@ def common_runtime_args(cfg: dict, provider: str | None, workspace: Path | None 
         args += ["-v", f"{workspace}:{workspace}:{mode}"]
         args += ["-v", f"{git_common}:{git_common}:{mode}"]
     return args
+
+def _merge_plan_environment(*groups: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
+    merged: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for name, value in group:
+            if name in seen:
+                raise ValueError(f"duplicate resolved execution environment key {name!r}")
+            seen.add(name)
+            merged.append((name, value))
+    return tuple(merged)
+
+
+def create_run_execution_plan(
+    cfg: dict,
+    provider: str,
+    context: TaskContext,
+    run_spec: RunSpec,
+    *,
+    readonly: bool,
+    outer_only: bool,
+    reference: Path,
+    git_common: Path | None,
+) -> ResolvedExecutionPlan:
+    """Resolve authorized broker/task/provider inputs into one executor plan."""
+    platform_root = Path(cfg["root"])
+    driver = registered_provider(provider)
+    workspace = canonical_dir(context.workspace, platform_root / "projects", "workspace mount")
+    task_meta = canonical_file(context.metadata_path, platform_root / "projects", "task metadata mount")
+
+    references: tuple[ExecutionMount, ...] = ()
+    if reference.exists():
+        reference = canonical_dir(reference, platform_root / "projects", "reference mount")
+        references = (ExecutionMount(str(reference), "/reference", True, "reference"),)
+
+    state_mounts = tuple(
+        ExecutionMount(state.source, state.target, state.read_only, "provider-state")
+        for state in driver.state_spec()
+    )
+
+    policy_mounts: list[ExecutionMount] = [
+        ExecutionMount(item.source, item.target, item.read_only, "provider-policy")
+        for item in run_spec.policy_artifacts.files
+    ]
+    adapter = provider_state_adapter(provider)
+    if adapter.policy_mounts:
+        seed = provider_seed_dir(cfg, provider)
+        for policy_mount in adapter.policy_mounts:
+            source = canonical_file(
+                seed / policy_mount.seed_relative_path,
+                seed,
+                f"{provider} policy",
+            )
+            policy_mounts.append(
+                ExecutionMount(
+                    str(source),
+                    policy_mount.target,
+                    policy_mount.read_only,
+                    "provider-policy",
+                )
+            )
+
+    auxiliary: list[ExecutionMount] = []
+    if git_common is not None:
+        git_common = canonical_dir(git_common, platform_root / "projects", "Git common directory")
+        mode_read_only = readonly
+        auxiliary += [
+            ExecutionMount(str(workspace), str(workspace), mode_read_only, "git-worktree"),
+            ExecutionMount(str(git_common), str(git_common), mode_read_only, "git-common"),
+        ]
+
+    task_environment = (
+        ("AGENT_TASK_ID", context.task),
+        ("AGENT_TASK_MODE", context.mode),
+        ("AGENT_TASK_BASE_COMMIT", str(context.record["base_commit"])),
+    )
+    environment = _merge_plan_environment(
+        task_environment,
+        run_spec.environment,
+        run_spec.policy_artifacts.environment,
+    )
+    required_capabilities = {"workspace:readonly" if readonly else "workspace:writable"}
+    if run_spec.interactive:
+        required_capabilities.add("interactive-run")
+    if outer_only:
+        required_capabilities.add("compatibility:outer-only")
+
+    return ResolvedExecutionPlan(
+        agent_id=provider,
+        image=cfg["images"][provider],
+        argv=run_spec.argv,
+        environment=environment,
+        workspace_mount=ExecutionMount(str(workspace), "/workspace", readonly, "workspace"),
+        reference_mounts=references,
+        task_metadata_mount=ExecutionMount(
+            str(task_meta), "/task/metadata.json", True, "task-metadata"
+        ),
+        provider_state_mounts=state_mounts,
+        provider_policy_artifacts=ResolvedProviderPolicyArtifacts(
+            mounts=tuple(policy_mounts),
+            argv=run_spec.policy_artifacts.argv,
+            environment=run_spec.policy_artifacts.environment,
+        ),
+        resource_limits=ResourceLimits(
+            pids=cfg["limits"]["pids"],
+            memory=cfg["limits"]["memory"],
+            cpus=cfg["limits"]["cpus"],
+        ),
+        network=NetworkRuntimeRequirements(PROVIDER_NETWORK_MODE, http_proxy=False),
+        readonly=readonly,
+        interaction_mode="interactive" if run_spec.interactive else "noninteractive",
+        security_class=None,
+        required_capabilities=frozenset(required_capabilities),
+        auxiliary_mounts=tuple(auxiliary),
+    )
+
+
+def execution_plan_argv(plan: ResolvedExecutionPlan) -> list[str]:
+    """Translate one resolved plan using the current in-broker Podman runtime."""
+    args = [
+        "podman", "run", "--rm", f"--network={plan.network.mode}",
+        f"--http-proxy={'true' if plan.network.http_proxy else 'false'}",
+        "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
+        f"--pids-limit={plan.resource_limits.pids}",
+        f"--memory={plan.resource_limits.memory}",
+        f"--cpus={plan.resource_limits.cpus}",
+        "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
+        "--tmpfs", "/run:rw,nosuid,nodev,size=64m",
+    ]
+    for mount in plan.all_mounts():
+        args += ["-v", f"{mount.source}:{mount.target}:{'ro' if mount.read_only else 'rw'}"]
+    args += ["-w", plan.working_directory]
+    args += provider_environment_args(plan.environment)
+    args += [plan.image, *plan.argv]
+    return args
+
 
 def stream_noninteractive(conn: socket.socket, argv: list[str], *, cwd=None, env=None) -> int:
     LOG.info("exec noninteractive argv0=%s", argv[0])
@@ -888,9 +1033,6 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
     seed_provider_home(cfg, provider)
     meta = pp["tasks"] / f"{task}.json"
     git_common = pp["agent"] / ".git" if rec["mode"] == "parallel" and rec.get("status") != "merged" else None
-    runtime = common_runtime_args(cfg, provider, ws, readonly=readonly, reference=pp["reference"], task_meta=meta, git_common=git_common)
-    runtime += ["-e", f"AGENT_TASK_ID={task}", "-e", f"AGENT_TASK_MODE={rec['mode']}", "-e", f"AGENT_TASK_BASE_COMMIT={rec['base_commit']}"]
-    image = cfg["images"][provider]
 
     context = TaskContext(
         project=project,
@@ -905,16 +1047,27 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
         raise RequestError("outer-only mode is Codex-only")
     policy = driver.compile_policy({"readonly": readonly, "outer_only": outer_only})
     run_spec = driver.create_run_spec(context, policy, prompt)
-    env_args = provider_environment_args(run_spec.environment)
-    agent_args = list(run_spec.argv)
-
-    argv = [*runtime, *env_args, image, *agent_args]
+    plan = create_run_execution_plan(
+        cfg,
+        provider,
+        context,
+        run_spec,
+        readonly=readonly,
+        outer_only=outer_only,
+        reference=pp["reference"],
+        git_common=git_common,
+    )
+    argv = execution_plan_argv(plan)
     lock_name = run_lock_name(task, rec)
     with lock_one(pp, lock_name, readonly):
-        cidfile = new_interactive_cidfile(cfg)
-        argv = add_cidfile(argv, cidfile)
-        send(conn, {"type": "start", "interactive": True})
-        rc = stream_interactive(conn, fileobj, argv, cidfile=cidfile)
+        if plan.interaction_mode == "noninteractive":
+            send(conn, {"type": "start", "interactive": False})
+            rc = stream_noninteractive(conn, argv)
+        else:
+            cidfile = new_interactive_cidfile(cfg)
+            argv = add_cidfile(argv, cidfile)
+            send(conn, {"type": "start", "interactive": True})
+            rc = stream_interactive(conn, fileobj, argv, cidfile=cidfile)
         try:
             send(conn, {"type": "exit", "code": rc})
         except OSError:

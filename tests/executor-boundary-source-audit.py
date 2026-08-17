@@ -302,10 +302,12 @@ def main() -> int:
         )
 
         op_run_source = inspect.getsource(agentd.op_run)
+        run_plan_source = inspect.getsource(agentd.create_run_execution_plan)
+        run_environment_source = f"{op_run_source}\n{run_plan_source}"
         secret_markers = ("SSH_AUTH_SOCK", "GPG_AGENT_INFO", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
-        present_secrets = [name for name in secret_markers if name in op_run_source]
-        audit.require(not present_secrets, "Explicit host secret env forwarding", "no known host secret variables are explicitly forwarded by op_run", f"explicit secret env markers found: {present_secrets}")
-        agent_vars = sorted(set(re.findall(r"AGENT_[A-Z0-9_]+", op_run_source)))
+        present_secrets = [name for name in secret_markers if name in run_environment_source]
+        audit.require(not present_secrets, "Explicit host secret env forwarding", "no known host secret variables are explicitly forwarded by run orchestration or plan resolution", f"explicit secret env markers found: {present_secrets}")
+        agent_vars = sorted(set(re.findall(r"AGENT_[A-Z0-9_]+", run_environment_source)))
         expected_agent_vars = ["AGENT_TASK_BASE_COMMIT", "AGENT_TASK_ID", "AGENT_TASK_MODE"]
         audit.require(agent_vars == expected_agent_vars, "Explicit task environment", f"only expected task metadata variables forwarded: {', '.join(agent_vars)}", f"unexpected AGENT_* environment set: {agent_vars}")
 
