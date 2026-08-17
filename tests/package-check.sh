@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-python3 -m py_compile "$ROOT/platform-src/bin/agentctl" "$ROOT/platform-src/bin/agentd" "$ROOT/platform-src/agentdev/broker/cli.py" "$ROOT/platform-src/agentdev/broker/daemon.py" "$ROOT/platform-src/agentdev/core/models.py" "$ROOT/platform-src/agentdev/core/validation.py" "$ROOT/platform-src/agentdev/core/projects.py" "$ROOT/platform-src/agentdev/core/git_handoff.py" "$ROOT/platform-src/agentdev/core/tasks.py" "$ROOT/platform-src/agentdev/core/dependencies.py" "$ROOT/platform-src/agentdev/core/worktrees.py" "$ROOT/tests/security-regression.py" "$ROOT/tests/cursor-policy-reconciliation-regression.py"
+python3 -m py_compile "$ROOT/platform-src/bin/agentctl" "$ROOT/platform-src/bin/agentd" "$ROOT/platform-src/agentdev/broker/cli.py" "$ROOT/platform-src/agentdev/broker/daemon.py" "$ROOT/platform-src/agentdev/core/models.py" "$ROOT/platform-src/agentdev/core/validation.py" "$ROOT/platform-src/agentdev/core/projects.py" "$ROOT/platform-src/agentdev/core/git_handoff.py" "$ROOT/platform-src/agentdev/core/tasks.py" "$ROOT/platform-src/agentdev/core/dependencies.py" "$ROOT/platform-src/agentdev/core/worktrees.py" "$ROOT/platform-src/agentdev/core/locking.py" "$ROOT/tests/security-regression.py" "$ROOT/tests/cursor-policy-reconciliation-regression.py"
 find "$ROOT/platform-src" "$ROOT/tests" -type d -name __pycache__ -prune -exec rm -rf {} +
 bash -n "$ROOT/bootstrap.sh" "$ROOT/tests/git-model-smoke.sh"
 python3 - <<PY
@@ -35,6 +35,7 @@ python3 "$ROOT/tests/modular-package-layout-regression.py"
 python3 "$ROOT/tests/core-validation-regression.py"
 python3 "$ROOT/tests/project-git-handoff-regression.py"
 python3 "$ROOT/tests/task-lifecycle-core-regression.py"
+python3 "$ROOT/tests/locking-service-regression.py"
 python3 "$ROOT/tests/provider-invocation-regression.py"
 python3 "$ROOT/tests/parallel-lifecycle-regression.py"
 python3 "$ROOT/tests/locking-concurrency-regression.py"

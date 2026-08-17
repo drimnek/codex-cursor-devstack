@@ -45,6 +45,7 @@ def main() -> None:
     core_tasks = PACKAGE / "core" / "tasks.py"
     core_dependencies = PACKAGE / "core" / "dependencies.py"
     core_worktrees = PACKAGE / "core" / "worktrees.py"
+    core_locking = PACKAGE / "core" / "locking.py"
     assert daemon_impl.is_file()
     assert cli_impl.is_file()
     assert core_models.is_file()
@@ -54,6 +55,7 @@ def main() -> None:
     assert core_tasks.is_file()
     assert core_dependencies.is_file()
     assert core_worktrees.is_file()
+    assert core_locking.is_file()
 
     for entrypoint in (PLATFORM / "bin" / "agentd", PLATFORM / "bin" / "agentctl"):
         source = entrypoint.read_text(encoding="utf-8")

@@ -8,7 +8,6 @@ that agent-controlled repository are mediated here.
 from __future__ import annotations
 
 import base64
-import contextlib
 import datetime as dt
 import fcntl
 import json
@@ -28,6 +27,12 @@ from pathlib import Path
 
 from agentdev.core.dependencies import validate_dependencies as validate_task_dependencies
 from agentdev.core.git_handoff import INTEGRATION_BRANCH
+from agentdev.core.locking import (
+    INTEGRATION_LOCK,
+    lock_one,
+    run_lock_name,
+    task_lock_name,
+)
 from agentdev.core.projects import (
     export_agent_project,
     initialize_agent_project,
@@ -181,20 +186,6 @@ def ensure_clean(repo: Path, label: str) -> None:
 def load_task(cfg: dict, project: str, task: str) -> tuple[dict, dict[str, Path], Path]:
     """Compatibility wrapper around the provider-neutral task loader."""
     return load_task_context(Path(cfg["root"]), project, task, read_json=read_json)
-
-
-@contextlib.contextmanager
-def lock_one(pp: dict[str, Path], lock_name: str, readonly: bool = False):
-    lock_name = valid_name(lock_name, "lock")
-    locks = pp["runtime"] / "locks"
-    locks.mkdir(parents=True, exist_ok=True)
-    path = locks / f"{lock_name}.lock"
-    f = path.open("a+")
-    try:
-        fcntl.flock(f.fileno(), fcntl.LOCK_SH if readonly else fcntl.LOCK_EX)
-        yield
-    finally:
-        f.close()
 
 
 def ensure_volume(name: str) -> None:
@@ -533,7 +524,7 @@ def op_project_sync(cfg: dict, req: dict) -> dict:
     if active_sequential(records) or pending_parallel(records):
         raise RequestError("cannot sync while tasks are active or parallel tasks await merge")
 
-    with lock_one(pp, "integration", False):
+    with lock_one(pp, INTEGRATION_LOCK, False):
         return synchronize_agent_project(
             Path(cfg["root"]),
             project,
@@ -548,7 +539,7 @@ def op_project_export(cfg: dict, req: dict) -> dict:
     project = valid_name(req.get("project"), "project")
     pp = project_paths(cfg, project)
     ensure_git_repo(pp["agent"], "repo/agent")
-    with lock_one(pp, "integration", True):
+    with lock_one(pp, INTEGRATION_LOCK, True):
         result = export_agent_project(
             Path(cfg["root"]),
             project,
@@ -578,7 +569,7 @@ def op_task_start(cfg: dict, req: dict) -> dict:
     )
     pp = project_paths(cfg, project)
     metadata_path = prepare_task_start_target(pp, task)
-    with lock_one(pp, "integration", False):
+    with lock_one(pp, INTEGRATION_LOCK, False):
         return start_task_locked(
             pp,
             project,
@@ -602,7 +593,7 @@ def op_task_complete(cfg: dict, req: dict) -> dict:
     task = valid_name(req.get("task"), "task")
     rec, pp, ws = load_task(cfg, project, task)
     validate_task_completion(rec)
-    lock_name = "integration" if rec["mode"] == "integration" else task
+    lock_name = task_lock_name(task, rec)
     with lock_one(pp, lock_name, False):
         return complete_task_locked(
             pp,
@@ -621,7 +612,7 @@ def op_task_merge(cfg: dict, req: dict) -> dict:
     rec, pp, ws = load_task(cfg, project, task)
     validate_task_merge(rec)
     # Integration lock serializes merges; task lock prevents concurrent review/write.
-    with lock_one(pp, "integration", False):
+    with lock_one(pp, INTEGRATION_LOCK, False):
         with lock_one(pp, task, False):
             return merge_task_locked(
                 pp,
@@ -640,7 +631,7 @@ def op_task_abort(cfg: dict, req: dict) -> dict:
     task = valid_name(req.get("task"), "task")
     rec, pp, ws = load_task(cfg, project, task)
     validate_task_abort(rec)
-    with lock_one(pp, "integration", False):
+    with lock_one(pp, INTEGRATION_LOCK, False):
         with lock_one(pp, task, False):
             return abort_task_locked(
                 pp,
@@ -662,7 +653,7 @@ def op_task_list(cfg: dict, req: dict) -> list[dict]:
 def op_project_status(cfg: dict, req: dict) -> dict:
     project = valid_name(req.get("project"), "project")
     pp = project_paths(cfg, project)
-    with lock_one(pp, "integration", True):
+    with lock_one(pp, INTEGRATION_LOCK, True):
         status = project_git_status(pp["agent"], git_text=git_text)
         return {"project": project, **status, "tasks": task_records(pp)}
 
@@ -870,7 +861,7 @@ def op_index(cfg: dict, conn: socket.socket, req: dict) -> int:
     git_common = pp["agent"] / ".git" if rec["mode"] == "parallel" and rec.get("status") != "merged" else None
     runtime = common_runtime_args(cfg, None, ws, readonly=False, reference=pp["reference"], task_meta=meta, git_common=git_common)
     argv = [*runtime, image, "gitnexus", "analyze", "--skip-agents-md", "--skip-skills", "--skip-embeddings"]
-    lock_name = "integration" if rec["mode"] == "integration" else task
+    lock_name = task_lock_name(task, rec)
     with lock_one(pp, lock_name, False):
         return stream_noninteractive(conn, argv)
 
@@ -912,7 +903,7 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
         if prompt.strip():
             agent_args.append(prompt)
     argv = [*runtime, image, *agent_args]
-    lock_name = "integration" if rec["mode"] == "integration" or rec.get("status") == "merged" else task
+    lock_name = run_lock_name(task, rec)
     with lock_one(pp, lock_name, readonly):
         cidfile = new_interactive_cidfile(cfg)
         argv = add_cidfile(argv, cidfile)
