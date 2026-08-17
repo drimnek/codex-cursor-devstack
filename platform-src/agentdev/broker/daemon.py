@@ -916,11 +916,28 @@ def op_index(cfg: dict, conn: socket.socket, req: dict) -> int:
         raise RequestError("optional GitNexus intelligence image is not available; rebuild or continue without indexing")
     meta = pp["tasks"] / f"{task}.json"
     git_common = pp["agent"] / ".git" if rec["mode"] == "parallel" and rec.get("status") != "merged" else None
+    gitnexus_home = pp["runtime"] / "gitnexus" / task
+    gitnexus_home.mkdir(parents=True, exist_ok=True)
+    gitnexus_home = canonical_dir(gitnexus_home, pp["runtime"], "GitNexus runtime home")
+    registry = gitnexus_home / ".gitnexus" / "registry.json"
+
     runtime = common_runtime_args(cfg, None, ws, readonly=False, reference=pp["reference"], task_meta=meta, git_common=git_common)
-    argv = [*runtime, image, "gitnexus", "analyze", "--skip-agents-md", "--skip-skills", "--skip-embeddings"]
+    runtime += [
+        "-v", f"{gitnexus_home}:/gitnexus-home:rw",
+        "-e", "HOME=/gitnexus-home",
+    ]
+    argv = [*runtime, image, "gitnexus", "analyze", "--skip-agents-md", "--skip-skills"]
+    if not registry.is_file():
+        argv.append("--force")
     lock_name = task_lock_name(task, rec)
     with lock_one(pp, lock_name, False):
-        return stream_noninteractive(conn, argv)
+        return execute_runtime_argv(
+            cfg,
+            conn,
+            None,
+            argv,
+            interactive=False,
+        )
 
 def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
     provider = req.get("provider")
