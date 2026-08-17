@@ -99,12 +99,15 @@ repo/agent                     agent-controlled after initialization
 └── tmp/
 ```
 
-Provider authentication/session state is stored in separate rootless Podman volumes:
+Provider authentication/session state is stored in scoped rootless Podman volumes:
 
 ```text
-agent-dev-codex-home
-agent-dev-cursor-home
+agent-dev-codex-state   -> /root/.codex
+agent-dev-cursor-state  -> /root/.cursor
+agent-dev-cursor-auth   -> /root/.config/cursor
 ```
+
+The separate Cursor XDG authentication volume restores persistent CLI login state without making the whole provider home writable. This does **not** provide credential confidentiality from processes already executing inside the Cursor executor; credential isolation remains a separate hardening requirement.
 
 Provider defaults are deployed under `/srv/agent-dev/platform/seed`, but provider runtime configuration follows each CLI's requirements. Codex keeps its authoritative `config.toml` mounted read-only. Cursor keeps its active `cli-config.json` writable because the CLI performs atomic rewrites of that file. The broker materializes the complete seed when the active Cursor config is missing and, on later provider use, reconciles only the platform-managed `permissions` field from the deployed seed while preserving other Cursor-managed fields. The outer Podman boundary remains authoritative for host access in both cases.
 
@@ -310,6 +313,8 @@ Run the repository checks first:
 ./tests/package-check.sh
 ```
 
+`./tests/package-check.sh` is the authoritative deterministic T3 acceptance runner. It must remain usable without provider credentials or an already deployed platform. Runtime E2E checks are kept separate and explicitly opt-in.
+
 On the target Ubuntu host, deployment validation can be run without applying the platform playbook:
 
 ```bash
@@ -357,6 +362,23 @@ agentctl auth cursor
 agentctl status
 ```
 
+The v0.1 lifecycle baseline is exercised through the opt-in runtime runner:
+
+```bash
+AGENTDEV_RUN_LIFECYCLE_E2E=1 \
+  tests/run-lifecycle-e2e.sh
+```
+
+On the currently validated rootless Podman host profile, Codex's nested Linux sandbox cannot create the required user namespace inside the executor. For that environment, run the lifecycle acceptance explicitly in compatibility mode:
+
+```bash
+AGENTDEV_RUN_LIFECYCLE_E2E=1 \
+AGENTDEV_CODEX_OUTER_ONLY=1 \
+  tests/run-lifecycle-e2e.sh
+```
+
+This is an environment-specific compatibility choice, not a claim that `--outer-only` is the preferred or hardened execution mode.
+
 The first real deployment should verify both supported Codex execution paths under the chosen Podman profile. If the nested Linux sandbox is available, validate normal `read-only` / `workspace-write` execution. If the container profile prevents nested sandbox initialization, validate `--outer-only` and specifically confirm that `--readonly --outer-only` leaves the workspace read-only and does not move the repository HEAD during review.
 
 ### Sequential acceptance gate
@@ -384,6 +406,8 @@ When these checks pass, the sequential pre-pilot acceptance stage is complete; t
 - GitNexus is optional and not injected as an MCP dependency into the core executor images.
 - Cursor CLI installation is frozen at image build time but is not yet pinned by a vendor-provided immutable installer artifact in this stack.
 - `--outer-only` intentionally disables Codex's inner OS sandbox and relies on broker-generated Podman isolation; resources exposed inside that executor are not additionally restricted by the Codex sandbox.
+- Provider credentials remain readable by processes inside the corresponding executor; scoped state volumes prevent whole-home persistence but do not yet provide task-level credential confidentiality.
+- Provider task networking currently controls the outer network mode and blocks host loopback where configured, but does not yet enforce destination-level outbound allowlists; destination egress restriction remains open hardening work.
 
 ## Scope discipline
 

@@ -51,3 +51,31 @@ For v0.2 work, run the deterministic gate first:
 ```
 
 Then run the runtime/E2E acceptance required by the specific backlog item.
+
+The frozen v0.1 lifecycle baseline is:
+
+```bash
+AGENTDEV_RUN_LIFECYCLE_E2E=1 \
+  tests/run-lifecycle-e2e.sh
+```
+
+On a host where Codex nested sandbox initialization fails because user namespaces
+cannot be created inside the rootless executor, use the explicit compatibility
+mode validated for that environment:
+
+```bash
+AGENTDEV_RUN_LIFECYCLE_E2E=1 \
+AGENTDEV_CODEX_OUTER_ONLY=1 \
+  tests/run-lifecycle-e2e.sh
+```
+
+Security baseline validation has two layers:
+
+- `tests/executor-boundary-source-audit.py` checks the source-level executor
+  boundary and reports `PASS`, `WARN`, and `FAIL` findings;
+- `tests/executor-security-baseline.py` freezes the currently closed guarantees
+  while intentionally retaining provider credential readability and
+  destination-level outbound egress as open findings.
+
+An accepted security baseline requires zero `FAIL` findings. Existing `WARN`
+findings must not be silently reclassified as hardened guarantees.
