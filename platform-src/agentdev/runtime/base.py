@@ -57,7 +57,7 @@ class RuntimeIO(Protocol):
         """Emit provider/runtime output."""
 
     def receive_control(self, timeout_seconds: float | None = None) -> RuntimeControl | None:
-        """Return the next interactive control event, or None on input closure."""
+        """Return the next control event, or None if no event is available before timeout."""
 
 
 @dataclass(frozen=True, slots=True)

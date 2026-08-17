@@ -289,7 +289,7 @@ def check_source_boundary() -> None:
 
     assert "create_run_execution_plan(" in daemon_source
     assert "plan = create_run_execution_plan(" in daemon_source
-    assert "argv = execution_plan_argv(plan)" in daemon_source
+    assert "execute_runtime_plan(cfg, conn, fileobj, plan)" in daemon_source
     assert '"podman"' not in plan_source
     assert "subprocess" not in plan_source
     assert "agentdev.agents.codex" not in plan_source

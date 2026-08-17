@@ -31,6 +31,9 @@ agentd = load_script("agentd_rpc_contract", ROOT / "platform-src/bin/agentd")
 agentctl = load_script("agentctl_rpc_contract", ROOT / "platform-src/bin/agentctl")
 agentd.LOG.disabled = True
 
+import agentdev.broker.runtime_io as broker_runtime_io
+import agentdev.runtime.podman as podman_runtime
+
 
 class FakeConn:
     def __init__(self, request: dict | None = None):
@@ -306,9 +309,8 @@ def check_run_contract() -> None:
         "seed_provider_home": agentd.seed_provider_home,
         "create_run_execution_plan": agentd.create_run_execution_plan,
         "execution_plan_argv": agentd.execution_plan_argv,
+        "execute_runtime_plan": agentd.execute_runtime_plan,
         "lock_one": agentd.lock_one,
-        "new_interactive_cidfile": agentd.new_interactive_cidfile,
-        "stream_interactive": agentd.stream_interactive,
     }
     calls: list[dict] = []
     task_state = {
@@ -360,13 +362,12 @@ def check_run_contract() -> None:
 
             agentd.create_run_execution_plan = fake_create_plan
             agentd.execution_plan_argv = fake_plan_argv
-            agentd.lock_one = lambda *_args, **_kwargs: contextlib.nullcontext()
-            agentd.new_interactive_cidfile = lambda _cfg: Path("/tmp/agentd-rpc-contract.cid")
             captured_argv: list[list[str]] = []
-            agentd.stream_interactive = (
-                lambda _conn, _fileobj, argv, **_kwargs:
-                captured_argv.append(list(argv)) or 0
+            agentd.execute_runtime_plan = (
+                lambda _cfg, _conn, _fileobj, plan:
+                captured_argv.append(fake_plan_argv(plan)) or 0
             )
+            agentd.lock_one = lambda *_args, **_kwargs: contextlib.nullcontext()
 
             cfg = {"images": {"codex": "codex-image", "cursor": "cursor-image"}}
 
@@ -470,9 +471,10 @@ def check_run_contract() -> None:
 
 def check_interactive_control_frames() -> None:
     originals = {
-        "openpty": agentd.pty.openpty,
-        "popen": agentd.subprocess.Popen,
-        "select": agentd.select.select,
+        "openpty": podman_runtime.pty.openpty,
+        "popen": podman_runtime.subprocess.Popen,
+        "podman_select": podman_runtime.select.select,
+        "rpc_select": broker_runtime_io.select.select,
         "terminate": agentd.terminate_process_group,
         "cleanup": agentd.cleanup_interactive_container,
     }
@@ -488,9 +490,10 @@ def check_interactive_control_frames() -> None:
         conn = FakeConn()
         fileobj = io.BytesIO(json.dumps(frame, separators=(",", ":")).encode() + b"\n")
         rfd, wfd = os.pipe()
-        agentd.pty.openpty = lambda: (rfd, wfd)
-        agentd.subprocess.Popen = lambda *_args, **_kwargs: FakeProc()
-        agentd.select.select = lambda *_args, **_kwargs: ([conn], [], [])
+        podman_runtime.pty.openpty = lambda: (rfd, wfd)
+        podman_runtime.subprocess.Popen = lambda *_args, **_kwargs: FakeProc()
+        podman_runtime.select.select = lambda *_args, **_kwargs: ([], [], [])
+        broker_runtime_io.select.select = lambda *_args, **_kwargs: ([conn], [], [])
         agentd.terminate_process_group = lambda _proc: None
         agentd.cleanup_interactive_container = lambda _cidfile: None
         return conn, fileobj
@@ -505,9 +508,10 @@ def check_interactive_control_frames() -> None:
             lambda: agentd.stream_interactive(conn, fileobj, ["fake"]),
         )
     finally:
-        agentd.pty.openpty = originals["openpty"]
-        agentd.subprocess.Popen = originals["popen"]
-        agentd.select.select = originals["select"]
+        podman_runtime.pty.openpty = originals["openpty"]
+        podman_runtime.subprocess.Popen = originals["popen"]
+        podman_runtime.select.select = originals["podman_select"]
+        broker_runtime_io.select.select = originals["rpc_select"]
         agentd.terminate_process_group = originals["terminate"]
         agentd.cleanup_interactive_container = originals["cleanup"]
 

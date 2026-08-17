@@ -7,23 +7,14 @@ that agent-controlled repository are mediated here.
 """
 from __future__ import annotations
 
-import base64
 import datetime as dt
-import fcntl
 import json
 import logging
 import os
-import pty
-import select
 import shlex
 import shutil
-import signal
 import socket
-import struct
 import subprocess
-import termios
-import time
-import uuid
 from pathlib import Path, PurePosixPath
 
 from agentdev.agents.base import RunSpec
@@ -36,6 +27,7 @@ from agentdev.execution.plan import (
     ResourceLimits,
 )
 
+from agentdev.broker.runtime_io import RpcRuntimeIO
 from agentdev.broker.rpc import (
     ALLOWED_OPS,
     REQUEST_FIELDS,
@@ -89,6 +81,17 @@ from agentdev.core.tasks import (
     validate_task_merge,
 )
 from agentdev.core.worktrees import BRANCH_PREFIX
+from agentdev.runtime.podman import (
+    PodmanBackend,
+    add_cidfile,
+    cleanup_interactive_container,
+    environment_args as provider_environment_args,
+    execution_plan_argv,
+    new_interactive_cidfile as podman_new_interactive_cidfile,
+    run_interactive_argv,
+    run_noninteractive_argv,
+    terminate_process_group,
+)
 
 CONFIG_PATH = Path("/srv/agent-dev/platform/config/platform.json")
 AGENT_REGISTRY = BUILTIN_AGENT_REGISTRY
@@ -477,85 +480,15 @@ def create_run_execution_plan(
     )
 
 
-def execution_plan_argv(plan: ResolvedExecutionPlan) -> list[str]:
-    """Translate one resolved plan using the current in-broker Podman runtime."""
-    args = [
-        "podman", "run", "--rm", f"--network={plan.network.mode}",
-        f"--http-proxy={'true' if plan.network.http_proxy else 'false'}",
-        "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
-        f"--pids-limit={plan.resource_limits.pids}",
-        f"--memory={plan.resource_limits.memory}",
-        f"--cpus={plan.resource_limits.cpus}",
-        "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
-        "--tmpfs", "/run:rw,nosuid,nodev,size=64m",
-    ]
-    for mount in plan.all_mounts():
-        args += ["-v", f"{mount.source}:{mount.target}:{'ro' if mount.read_only else 'rw'}"]
-    args += ["-w", plan.working_directory]
-    args += provider_environment_args(plan.environment)
-    args += [plan.image, *plan.argv]
-    return args
-
-
 def stream_noninteractive(conn: socket.socket, argv: list[str], *, cwd=None, env=None) -> int:
-    LOG.info("exec noninteractive argv0=%s", argv[0])
-    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    assert proc.stdout is not None
-    while True:
-        chunk = proc.stdout.read(4096)
-        if not chunk:
-            break
-        send_output(conn, chunk)
-    return proc.wait()
-
-
-def set_winsize(fd: int, rows: int, cols: int) -> None:
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-
-
-def terminate_process_group(proc: subprocess.Popen, *, int_grace: float = 2.0, term_grace: float = 3.0) -> None:
-    """Terminate one interactive request without affecting unrelated broker work."""
-    if proc.poll() is not None:
-        return
-    for sig, grace in ((signal.SIGINT, int_grace), (signal.SIGTERM, term_grace)):
-        try:
-            os.killpg(proc.pid, sig)
-        except ProcessLookupError:
-            return
-        try:
-            proc.wait(timeout=grace)
-            return
-        except subprocess.TimeoutExpired:
-            pass
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        return
-    proc.wait()
+    """Compatibility wrapper around runtime-owned noninteractive process execution."""
+    result = run_noninteractive_argv(argv, RpcRuntimeIO(conn), cwd=cwd, env=env)
+    return result.exit_code
 
 
 def new_interactive_cidfile(cfg: dict) -> Path:
-    root = Path(cfg["state_dir"]) / "interactive"
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    return root / f"{uuid.uuid4().hex}.cid"
-
-
-def add_cidfile(argv: list[str], cidfile: Path) -> list[str]:
-    if len(argv) < 2 or argv[:2] != ["podman", "run"]:
-        raise ValueError("interactive executor must use podman run")
-    return [*argv[:2], "--cidfile", str(cidfile), *argv[2:]]
-
-
-def cleanup_interactive_container(cidfile: Path | None) -> None:
-    if cidfile is None:
-        return
-    try:
-        cid = cidfile.read_text().strip()
-    except FileNotFoundError:
-        cid = ""
-    if cid:
-        subprocess.run(["podman", "rm", "-f", cid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    cidfile.unlink(missing_ok=True)
+    """Compatibility wrapper around the runtime-owned cidfile allocator."""
+    return podman_new_interactive_cidfile(Path(cfg["state_dir"]))
 
 
 def stream_interactive(
@@ -568,77 +501,30 @@ def stream_interactive(
     timeout_seconds: float | None = None,
     cidfile: Path | None = None,
 ) -> int:
-    LOG.info("exec interactive argv0=%s", argv[0])
-    master, slave = pty.openpty()
-    proc = subprocess.Popen(
-        argv, cwd=cwd, env=env, stdin=slave, stdout=slave, stderr=slave,
-        close_fds=True, start_new_session=True,
+    """Compatibility wrapper around runtime-owned PTY/process execution."""
+    result = run_interactive_argv(
+        argv,
+        RpcRuntimeIO(conn, fileobj),
+        cwd=cwd,
+        env=env,
+        timeout_seconds=timeout_seconds,
+        timeout_output=b"\r\nAuthentication timed out.\r\n",
+        cidfile=cidfile,
+        terminate=terminate_process_group,
+        cleanup=cleanup_interactive_container,
     )
-    os.close(slave)
-    cancelled = False
-    timed_out = False
-    deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
-    try:
-        while True:
-            if deadline is not None and time.monotonic() >= deadline:
-                timed_out = True
-                send_output(conn, b"\r\nAuthentication timed out.\r\n")
-                terminate_process_group(proc)
-                break
+    return result.exit_code
 
-            select_timeout = 0.25
-            if deadline is not None:
-                select_timeout = max(0.0, min(select_timeout, deadline - time.monotonic()))
-            readable, _, _ = select.select([master, conn], [], [], select_timeout)
-            if master in readable:
-                try:
-                    data = os.read(master, 4096)
-                except OSError:
-                    data = b""
-                if data:
-                    send_output(conn, data)
-            if conn in readable:
-                msg = recv_json_line(fileobj)
-                if msg is None:
-                    cancelled = True
-                    terminate_process_group(proc)
-                    break
-                if msg.get("type") == "input":
-                    try:
-                        os.write(master, base64.b64decode(msg.get("data", "")))
-                    except OSError:
-                        pass
-                elif msg.get("type") == "resize":
-                    try:
-                        set_winsize(master, int(msg["rows"]), int(msg["cols"]))
-                    except Exception:
-                        pass
-                elif msg.get("type") == "cancel":
-                    cancelled = True
-                    terminate_process_group(proc)
-                    break
-                else:
-                    raise RequestError("unsupported interactive RPC frame")
-            if proc.poll() is not None:
-                while True:
-                    try:
-                        data = os.read(master, 4096)
-                    except OSError:
-                        break
-                    if not data:
-                        break
-                    send_output(conn, data)
-                break
-        if timed_out:
-            return 124
-        if cancelled:
-            return 130
-        return proc.wait()
-    finally:
-        if proc.poll() is None:
-            terminate_process_group(proc)
-        cleanup_interactive_container(cidfile)
-        os.close(master)
+
+def execute_runtime_plan(
+    cfg: dict,
+    conn: socket.socket,
+    fileobj,
+    plan: ResolvedExecutionPlan,
+) -> int:
+    """Execute one resolved plan through the configured runtime backend."""
+    backend = PodmanBackend(Path(cfg["state_dir"]))
+    return backend.execute(plan, RpcRuntimeIO(conn, fileobj)).exit_code
 
 
 # ---- Git/project lifecycle operations (always agentdev) ---------------------
@@ -864,13 +750,6 @@ def op_build(cfg: dict, conn: socket.socket) -> int:
     LOG.info("build lock images=%s", sorted(lock["images"]))
     return 0
 
-def provider_environment_args(environment: tuple[tuple[str, str], ...]) -> list[str]:
-    args: list[str] = []
-    for name, value in environment:
-        args += ["-e", f"{name}={value}"]
-    return args
-
-
 def op_auth(cfg: dict, conn: socket.socket, fileobj, provider: str) -> int:
     provider = valid_name(provider, "provider")
     driver = registered_provider(provider, request_error=True)
@@ -1057,17 +936,10 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
         reference=pp["reference"],
         git_common=git_common,
     )
-    argv = execution_plan_argv(plan)
     lock_name = run_lock_name(task, rec)
     with lock_one(pp, lock_name, readonly):
-        if plan.interaction_mode == "noninteractive":
-            send(conn, {"type": "start", "interactive": False})
-            rc = stream_noninteractive(conn, argv)
-        else:
-            cidfile = new_interactive_cidfile(cfg)
-            argv = add_cidfile(argv, cidfile)
-            send(conn, {"type": "start", "interactive": True})
-            rc = stream_interactive(conn, fileobj, argv, cidfile=cidfile)
+        send(conn, {"type": "start", "interactive": plan.interaction_mode == "interactive"})
+        rc = execute_runtime_plan(cfg, conn, fileobj, plan)
         try:
             send(conn, {"type": "exit", "code": rc})
         except OSError:

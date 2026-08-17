@@ -55,6 +55,8 @@ def main() -> None:
     cursor_driver = PACKAGE / "agents" / "cursor.py"
     execution_plan = PACKAGE / "execution" / "plan.py"
     runtime_backend_base = PACKAGE / "runtime" / "base.py"
+    podman_backend = PACKAGE / "runtime" / "podman.py"
+    rpc_runtime_io = PACKAGE / "broker" / "runtime_io.py"
     assert daemon_impl.is_file()
     assert cli_impl.is_file()
     assert rpc_impl.is_file()
@@ -73,6 +75,8 @@ def main() -> None:
     assert cursor_driver.is_file()
     assert execution_plan.is_file()
     assert runtime_backend_base.is_file()
+    assert podman_backend.is_file()
+    assert rpc_runtime_io.is_file()
 
     for entrypoint in (PLATFORM / "bin" / "agentd", PLATFORM / "bin" / "agentctl"):
         source = entrypoint.read_text(encoding="utf-8")
@@ -111,6 +115,8 @@ def main() -> None:
         from agentdev.broker import cli, daemon, rpc
         from agentdev.execution.plan import ResolvedExecutionPlan
         from agentdev.runtime.base import RuntimeBackend, RuntimeControl, RuntimeResult
+        from agentdev.runtime.podman import PodmanBackend
+        from agentdev.broker.runtime_io import RpcRuntimeIO
 
         assert inspect.isabstract(AgentDriver)
         assert AgentCapabilities(frozenset({"readonly"}))
@@ -127,6 +133,8 @@ def main() -> None:
         assert inspect.isabstract(RuntimeBackend)
         assert RuntimeControl("cancel").kind == "cancel"
         assert RuntimeResult(0).exit_code == 0
+        assert PodmanBackend.__module__ == "agentdev.runtime.podman"
+        assert RpcRuntimeIO.__module__ == "agentdev.broker.runtime_io"
     finally:
         sys.path.pop(0)
 

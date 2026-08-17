@@ -354,10 +354,8 @@ def check_run_invocations() -> None:
         "seed_provider_home": agentd.seed_provider_home,
         "create_run_execution_plan": agentd.create_run_execution_plan,
         "execution_plan_argv": agentd.execution_plan_argv,
+        "execute_runtime_plan": agentd.execute_runtime_plan,
         "lock_one": agentd.lock_one,
-        "new_interactive_cidfile": agentd.new_interactive_cidfile,
-        "add_cidfile": agentd.add_cidfile,
-        "stream_interactive": agentd.stream_interactive,
     }
 
     with tempfile.TemporaryDirectory() as td:
@@ -424,15 +422,11 @@ def check_run_invocations() -> None:
 
             agentd.create_run_execution_plan = fake_create_plan
             agentd.execution_plan_argv = fake_plan_argv
+            agentd.execute_runtime_plan = (
+                lambda _cfg, _conn, _fileobj, plan:
+                invocations.append(fake_plan_argv(plan)) or 0
+            )
             agentd.lock_one = lambda *_args, **_kwargs: contextlib.nullcontext()
-            agentd.new_interactive_cidfile = (
-                lambda _cfg: Path("/tmp/provider-invocation.cid")
-            )
-            agentd.add_cidfile = lambda argv, _cidfile: list(argv)
-            agentd.stream_interactive = (
-                lambda _conn, _fileobj, argv, **_kwargs:
-                invocations.append(list(argv)) or 0
-            )
 
             cfg = {
                 "images": {

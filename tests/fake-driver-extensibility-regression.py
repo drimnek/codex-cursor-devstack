@@ -279,10 +279,17 @@ def test_generic_auth_and_run_consume_fake_specs() -> None:
                 *[item for name, value in plan.run_spec.environment for item in ("-e", f"{name}={value}")],
                 plan.image, *plan.run_spec.argv,
             ],
-            new_interactive_cidfile=lambda _cfg: cidfile,
-            add_cidfile=lambda argv, _cidfile: argv,
+            execute_runtime_plan=lambda _cfg, _conn, _fileobj, plan:
+                interactive_run(
+                    _conn,
+                    _fileobj,
+                    [
+                        "runtime", plan.provider,
+                        *[item for name, value in plan.run_spec.environment for item in ("-e", f"{name}={value}")],
+                        plan.image, *plan.run_spec.argv,
+                    ],
+                ),
             send=lambda _conn, frame: frames.append(frame),
-            stream_interactive=interactive_run,
             lock_one=no_lock,
         ):
             assert agentd.op_run(
