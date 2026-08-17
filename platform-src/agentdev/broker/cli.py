@@ -13,7 +13,6 @@ import datetime as dt
 import grp
 import json
 import os
-import re
 import shutil
 import signal
 import socket
@@ -24,8 +23,10 @@ import threading
 import tty
 from pathlib import Path
 
+from agentdev.core.models import ProjectContext
+from agentdev.core.validation import is_valid_name
+
 CONFIG_PATH = Path("/srv/agent-dev/platform/config/platform.json")
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 BRANCH_PREFIX = "agent/"
 INTEGRATION_BRANCH = "agent/integration"
 
@@ -43,7 +44,7 @@ def load_config() -> dict:
 
 
 def check_name(value: str, what: str) -> str:
-    if not NAME_RE.fullmatch(value):
+    if not is_valid_name(value):
         die(f"invalid {what} name {value!r}; use letters, numbers, dot, underscore or dash")
     return value
 
@@ -66,22 +67,8 @@ def require_operator(cfg: dict) -> None:
 
 def project_paths(cfg: dict, project: str) -> dict[str, Path]:
     project = check_name(project, "project")
-    root = Path(cfg["root"]) / "projects" / project
-    return {
-        "root": root,
-        "repo_root": root / "repo",
-        "main": root / "repo" / "main",
-        "agent": root / "repo" / "agent",
-        "worktrees": root / "worktrees",
-        "tasks": root / "tasks",
-        "reference": root / "reference",
-        "results": root / "results",
-        "runtime": root / "runtime",
-        "exchange": root / "exchange",
-        "inbound": root / "exchange" / "inbound",
-        "outbound": root / "exchange" / "outbound",
-        "project_meta": root / "project.json",
-    }
+    context = ProjectContext.from_platform_root(Path(cfg["root"]), project)
+    return context.controller_paths()
 
 
 def task_meta_path(pp: dict[str, Path], task: str) -> Path:
@@ -485,7 +472,7 @@ def discover_projects(cfg: dict) -> list[dict]:
 
     result: list[dict] = []
     for entry in entries:
-        if not NAME_RE.fullmatch(entry.name) or not _real_dir(entry):
+        if not is_valid_name(entry.name) or not _real_dir(entry):
             continue
         repo_root = entry / "repo"
         ready = (

@@ -1,7 +1,10 @@
 #!/usr/bin/python3
 """Compatibility entrypoint for the packaged agentctl implementation."""
-
+import sys
 from pathlib import Path
 
-_IMPLEMENTATION = Path(__file__).resolve().parents[1] / "agentdev" / "broker" / "cli.py"
+_PLATFORM = Path(__file__).resolve().parents[1]
+if str(_PLATFORM) not in sys.path:
+    sys.path.insert(0, str(_PLATFORM))
+_IMPLEMENTATION = _PLATFORM / "agentdev" / "broker" / "cli.py"
 exec(compile(_IMPLEMENTATION.read_bytes(), str(_IMPLEMENTATION), "exec"), globals(), globals())

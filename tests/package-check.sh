@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-python3 -m py_compile "$ROOT/platform-src/bin/agentctl" "$ROOT/platform-src/bin/agentd" "$ROOT/platform-src/agentdev/broker/cli.py" "$ROOT/platform-src/agentdev/broker/daemon.py" "$ROOT/tests/security-regression.py" "$ROOT/tests/cursor-policy-reconciliation-regression.py"
+python3 -m py_compile "$ROOT/platform-src/bin/agentctl" "$ROOT/platform-src/bin/agentd" "$ROOT/platform-src/agentdev/broker/cli.py" "$ROOT/platform-src/agentdev/broker/daemon.py" "$ROOT/platform-src/agentdev/core/models.py" "$ROOT/platform-src/agentdev/core/validation.py" "$ROOT/tests/security-regression.py" "$ROOT/tests/cursor-policy-reconciliation-regression.py"
 find "$ROOT/platform-src" "$ROOT/tests" -type d -name __pycache__ -prune -exec rm -rf {} +
 bash -n "$ROOT/bootstrap.sh" "$ROOT/tests/git-model-smoke.sh"
 python3 - <<PY
@@ -32,6 +32,7 @@ python3 "$ROOT/tests/cursor-policy-reconciliation-regression.py"
 python3 "$ROOT/tests/package-baseline-regression.py"
 python3 "$ROOT/tests/broker-rpc-contract-regression.py"
 python3 "$ROOT/tests/modular-package-layout-regression.py"
+python3 "$ROOT/tests/core-validation-regression.py"
 python3 "$ROOT/tests/provider-invocation-regression.py"
 python3 "$ROOT/tests/parallel-lifecycle-regression.py"
 python3 "$ROOT/tests/locking-concurrency-regression.py"
@@ -40,7 +41,9 @@ python3 "$ROOT/tests/project-list-regression.py"
 python3 "$ROOT/tests/provider-e2e-runner-regression.py"
 python3 "$ROOT/tests/provider-state-layout-regression.py"
 python3 "$ROOT/tests/executor-network-contract-regression.py"
-AGENTD_UNDER_TEST="$ROOT/platform-src/agentdev/broker/daemon.py" python3 "$ROOT/tests/executor-boundary-source-audit.py"
+PYTHONPATH="$ROOT/platform-src${PYTHONPATH:+:$PYTHONPATH}" \
+AGENTD_UNDER_TEST="$ROOT/platform-src/agentdev/broker/daemon.py" \
+python3 "$ROOT/tests/executor-boundary-source-audit.py"
 "$ROOT/tests/run-cross-provider-parallel-e2e.sh"
 # Cursor installer layout regression: install directly under the immutable
 # executor prefix and preserve the installer-created launcher chain.

@@ -27,8 +27,17 @@ import time
 import uuid
 from pathlib import Path
 
+from agentdev.core.models import ProjectContext, TaskContext
+from agentdev.core.validation import (
+    InputValidationError,
+    canonical_dir,
+    canonical_file,
+    ensure_under,
+    valid_git_branch,
+    valid_name,
+)
+
 CONFIG_PATH = Path("/srv/agent-dev/platform/config/platform.json")
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 ALLOWED_PROVIDERS = {"codex", "cursor"}
 PROVIDER_NETWORK_MODE = "slirp4netns:allow_host_loopback=false"
 ALLOWED_OPS = {
@@ -63,8 +72,8 @@ logging.basicConfig(level=logging.INFO, format="agentd %(levelname)s %(message)s
 LOG = logging.getLogger("agentd")
 
 
-class RequestError(ValueError):
-    """Expected rejection of an invalid or currently inadmissible RPC request."""
+# Compatibility name retained for the frozen broker RPC contract.
+RequestError = InputValidationError
 
 
 def load_config() -> dict:
@@ -96,21 +105,6 @@ def recv_json_line(fileobj) -> dict | None:
         raise RequestError("invalid JSON request") from exc
 
 
-def valid_name(value, what: str) -> str:
-    if not isinstance(value, str) or not NAME_RE.fullmatch(value):
-        raise RequestError(f"invalid {what}")
-    return value
-
-
-def valid_git_branch(value, what: str = "Git branch") -> str:
-    if not isinstance(value, str) or len(value) > 255:
-        raise RequestError(f"invalid {what}")
-    proc = subprocess.run(["git", "check-ref-format", "--branch", value], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if proc.returncode != 0:
-        raise RequestError(f"invalid {what}: {value!r}")
-    return value
-
-
 def validate_request_shape(req: dict) -> None:
     op = req.get("op")
     if op not in ALLOWED_OPS:
@@ -120,39 +114,11 @@ def validate_request_shape(req: dict) -> None:
     if unknown:
         raise RequestError(f"unexpected RPC fields for {op}: {sorted(unknown)}")
 
-
-def ensure_under(path: Path, root: Path) -> Path:
-    resolved = path.resolve(strict=True)
-    root_resolved = root.resolve(strict=True)
-    try:
-        resolved.relative_to(root_resolved)
-    except ValueError as exc:
-        raise ValueError(f"path escapes allowed root: {path}") from exc
-    return resolved
-
-
-def canonical_dir(path: Path, root: Path, label: str) -> Path:
-    if path.is_symlink():
-        raise ValueError(f"{label} must not be a symlink: {path}")
-    resolved = ensure_under(path, root)
-    if not resolved.is_dir():
-        raise ValueError(f"{label} is not a directory: {path}")
-    return resolved
-
-
-def canonical_file(path: Path, root: Path, label: str) -> Path:
-    if path.is_symlink():
-        raise ValueError(f"{label} must not be a symlink: {path}")
-    resolved = ensure_under(path, root)
-    if not resolved.is_file():
-        raise ValueError(f"{label} is not a regular file: {path}")
-    return resolved
-
-
 def project_root(cfg: dict, project: str) -> Path:
     project = valid_name(project, "project")
-    projects = Path(cfg["root"]) / "projects"
-    candidate = projects / project
+    context = ProjectContext.from_platform_root(Path(cfg["root"]), project)
+    projects = context.root.parent
+    candidate = context.root
     if candidate.is_symlink():
         raise RequestError("project root must not be a symlink")
     root = ensure_under(candidate, projects)
@@ -163,22 +129,22 @@ def project_root(cfg: dict, project: str) -> Path:
 
 def project_paths(cfg: dict, project: str) -> dict[str, Path]:
     root = project_root(cfg, project)
+    context = ProjectContext.from_project_root(project, root)
 
-    def subdir(rel: str, label: str) -> Path:
-        raw = root / rel
-        return canonical_dir(raw, root, label)
+    def subdir(path: Path, label: str) -> Path:
+        return canonical_dir(path, root, label)
 
     return {
         "root": root,
-        "agent": subdir("repo/agent", "agent repository root"),
-        "worktrees": subdir("worktrees", "worktrees root"),
-        "tasks": subdir("tasks", "tasks root"),
-        "reference": subdir("reference", "reference root"),
-        "results": subdir("results", "results root"),
-        "runtime": subdir("runtime", "runtime root"),
-        "inbound": subdir("exchange/inbound", "inbound exchange root"),
-        "outbound": subdir("exchange/outbound", "outbound exchange root"),
-        "project_meta": root / "project.json",
+        "agent": subdir(context.agent, "agent repository root"),
+        "worktrees": subdir(context.worktrees, "worktrees root"),
+        "tasks": subdir(context.tasks, "tasks root"),
+        "reference": subdir(context.reference, "reference root"),
+        "results": subdir(context.results, "results root"),
+        "runtime": subdir(context.runtime, "runtime root"),
+        "inbound": subdir(context.inbound, "inbound exchange root"),
+        "outbound": subdir(context.outbound, "outbound exchange root"),
+        "project_meta": context.project_meta,
     }
 
 def read_json(path: Path, what: str) -> dict:
@@ -254,7 +220,16 @@ def load_task(cfg: dict, project: str, task: str) -> tuple[dict, dict[str, Path]
     ws = pp["agent"] if mode == "integration" or status == "merged" else pp["worktrees"] / task
     ws_root = pp["agent"] if mode == "integration" or status == "merged" else pp["worktrees"]
     ws = canonical_dir(ws, ws_root if mode == "parallel" and status != "merged" else pp["root"], "task workspace")
-    return rec, pp, ws
+    context = TaskContext(
+        project=project,
+        task=task,
+        mode=mode,
+        status=status,
+        metadata_path=meta_path,
+        workspace=ws,
+        record=rec,
+    )
+    return context.record, pp, context.workspace
 
 
 @contextlib.contextmanager

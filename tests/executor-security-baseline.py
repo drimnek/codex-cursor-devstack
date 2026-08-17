@@ -12,7 +12,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-AGENTD = ROOT / "platform-src/agentdev/broker/daemon.py"
+PLATFORM_SRC = ROOT / "platform-src"
+AGENTD = PLATFORM_SRC / "agentdev/broker/daemon.py"
 AUDIT = ROOT / "tests/executor-boundary-source-audit.py"
 
 
@@ -27,6 +28,12 @@ def require(condition: bool, message: str) -> None:
 
 def run_audit(agentd: Path) -> tuple[int, dict]:
     env = os.environ.copy()
+    current_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        str(PLATFORM_SRC)
+        if not current_pythonpath
+        else os.pathsep.join((str(PLATFORM_SRC), current_pythonpath))
+    )
     env["AGENTD_UNDER_TEST"] = str(agentd)
     proc = subprocess.run(
         [sys.executable, str(AUDIT), "--json"],
