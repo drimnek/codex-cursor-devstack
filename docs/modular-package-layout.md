@@ -9,9 +9,14 @@ boundary after the completed CORE extraction series.
 behavior while moving provider-neutral lifecycle and RPC responsibilities behind
 package-level APIs.
 
-The AgentDriver, runtime-backend, execution-policy, and provider-registry layers
-are not yet implemented. They remain the next migration stages described in
-`docs/multi-agent-architecture-v0.2.md`.
+The provider-neutral AgentDriver contract and trusted in-tree AgentRegistry
+are now implemented by `MA2-DRV-001` and `MA2-DRV-002`. Concrete Codex/Cursor
+semantics are not yet extracted: provider state, authentication, command,
+policy, and runtime behavior still remains in the broker until the following
+driver/runtime cases.
+
+The runtime-backend and execution-policy layers remain later migration stages
+described in `docs/multi-agent-architecture-v0.2.md`.
 
 ## Current package structure
 
@@ -20,7 +25,9 @@ platform-src/
 ├── agentdev/
 │   ├── __init__.py
 │   ├── agents/
-│   │   └── __init__.py
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   └── registry.py
 │   ├── broker/
 │   │   ├── __init__.py
 │   │   ├── cli.py
@@ -47,10 +54,11 @@ platform-src/
     └── agentd
 ```
 
-`agents`, `execution`, `policy`, and `runtime` are structural package
-boundaries for subsequent migration phases. They should not yet be interpreted
-as implemented driver, execution-plan, policy-engine, or runtime-backend
-subsystems.
+`agents` now contains the implemented provider-neutral driver contract and the
+trusted registry. It does not yet contain concrete Codex/Cursor drivers.
+`execution`, `policy`, and `runtime` remain structural package boundaries for
+subsequent migration phases and should not yet be interpreted as implemented
+execution-plan, policy-engine, or runtime-backend subsystems.
 
 ## Public entrypoint boundary
 
@@ -152,6 +160,26 @@ fd-3 socket serving.
 `daemon.py` supplies concrete operation callables per request. This preserves
 the frozen characterization-test behavior in which operation globals can be
 monkeypatched through the compatibility entrypoint.
+
+## Implemented driver contract and trusted registry
+
+```text
+agentdev/agents/base.py
+agentdev/agents/registry.py
+```
+
+`base.py` defines immutable provider-neutral specifications for capabilities,
+installation metadata, persistent state mounts, authentication, version
+probing, provider-native policy artifacts, and provider run commands.
+
+`registry.py` owns the fixed trusted set of in-tree driver objects used by the
+broker. Generic provider acceptance and enumeration no longer relies on a
+separate `ALLOWED_PROVIDERS` constant.
+
+At this checkpoint, the built-in Codex/Cursor registrations are deliberately
+transitional identity bridges. They fail closed for provider semantics that
+have not yet been migrated. This prevents the registry from duplicating or
+inventing provider behavior while the extraction is incomplete.
 
 ## Responsibilities still in the broker daemon
 

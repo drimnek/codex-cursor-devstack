@@ -1157,7 +1157,7 @@ plus the CORE-specific deterministic regressions.
 
 # Phase 2 — AgentDriver Contract
 
-Status: **Next**
+Status: **In progress — MA2-DRV-001 and MA2-DRV-002 complete**
 
 ## Objective
 
@@ -1204,6 +1204,25 @@ ALLOWED_PROVIDERS
 ```
 
 with the trusted agent registry.
+
+### Current implementation checkpoint
+
+The first two driver-phase cases are implemented:
+
+- `MA2-DRV-001` defines the provider-neutral `AgentDriver`,
+  `AgentCapabilities`, `RunSpec`, authentication/version/installation
+  specifications, and validated provider-state mount primitive;
+- `MA2-DRV-002` adds the explicit trusted in-tree `AgentRegistry` and replaces
+  generic broker provider enumeration/acceptance through
+  `ALLOWED_PROVIDERS`.
+
+The built-in Codex and Cursor registrations are intentionally transitional:
+their identities are registry-owned, while provider state, authentication,
+command, policy, and runtime semantics still remain in the broker until the
+following extraction cases.
+
+Next: `MA2-DRV-003` moves provider-state layout, migration, policy-target, and
+reconciliation semantics behind the driver/state-adapter boundary.
 
 ### Exit Criteria
 
