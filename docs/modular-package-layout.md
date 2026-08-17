@@ -9,14 +9,15 @@ boundary after the completed CORE extraction series.
 behavior while moving provider-neutral lifecycle and RPC responsibilities behind
 package-level APIs.
 
-The provider-neutral AgentDriver contract and trusted in-tree AgentRegistry
-are now implemented by `MA2-DRV-001` and `MA2-DRV-002`. Concrete Codex/Cursor
-semantics are not yet extracted: provider state, authentication, command,
-policy, and runtime behavior still remains in the broker until the following
-driver/runtime cases.
+The provider-neutral AgentDriver contract, trusted in-tree AgentRegistry, provider
+state adapters, and concrete Codex/Cursor reference drivers are now implemented
+through `MA2-DRV-005`. Provider-native authentication, version probes, state
+metadata, configuration reconciliation, and run-command construction are owned
+by the drivers rather than generic broker operations.
 
-The runtime-backend and execution-policy layers remain later migration stages
-described in `docs/multi-agent-architecture-v0.2.md`.
+Podman execution, execution-plan construction, and provider-neutral policy
+resolution remain later migration stages described in
+`docs/multi-agent-architecture-v0.2.md`.
 
 ## Current package structure
 
@@ -27,7 +28,10 @@ platform-src/
 │   ├── agents/
 │   │   ├── __init__.py
 │   │   ├── base.py
-│   │   └── registry.py
+│   │   ├── registry.py
+│   │   ├── state.py
+│   │   ├── codex.py
+│   │   └── cursor.py
 │   ├── broker/
 │   │   ├── __init__.py
 │   │   ├── cli.py
@@ -54,11 +58,11 @@ platform-src/
     └── agentd
 ```
 
-`agents` now contains the implemented provider-neutral driver contract and the
-trusted registry. It does not yet contain concrete Codex/Cursor drivers.
-`execution`, `policy`, and `runtime` remain structural package boundaries for
-subsequent migration phases and should not yet be interpreted as implemented
-execution-plan, policy-engine, or runtime-backend subsystems.
+`agents` now contains the provider-neutral driver/state contracts, trusted
+registry, and both concrete reference drivers (`CodexDriver` and
+`CursorDriver`). `execution`, `policy`, and `runtime` remain structural package
+boundaries for subsequent migration phases and should not yet be interpreted as
+implemented execution-plan, policy-engine, or runtime-backend subsystems.
 
 ## Public entrypoint boundary
 
@@ -161,11 +165,14 @@ fd-3 socket serving.
 the frozen characterization-test behavior in which operation globals can be
 monkeypatched through the compatibility entrypoint.
 
-## Implemented driver contract and trusted registry
+## Implemented driver layer
 
 ```text
 agentdev/agents/base.py
 agentdev/agents/registry.py
+agentdev/agents/state.py
+agentdev/agents/codex.py
+agentdev/agents/cursor.py
 ```
 
 `base.py` defines immutable provider-neutral specifications for capabilities,
@@ -174,32 +181,36 @@ probing, provider-native policy artifacts, and provider run commands.
 
 `registry.py` owns the fixed trusted set of in-tree driver objects used by the
 broker. Generic provider acceptance and enumeration no longer relies on a
-separate `ALLOWED_PROVIDERS` constant.
+separate `ALLOWED_PROVIDERS` constant or transitional provider identities.
 
-At this checkpoint, the built-in Codex/Cursor registrations are deliberately
-transitional identity bridges. They fail closed for provider semantics that
-have not yet been migrated. This prevents the registry from duplicating or
-inventing provider behavior while the extraction is incomplete.
+`state.py` defines provider-owned state layout, migration, native config target,
+and managed-state reconciliation metadata consumed by generic broker/runtime
+code.
+
+`CodexDriver` and `CursorDriver` are the two concrete reference drivers. They
+own their provider CLI authentication/status/version/run syntax and their
+provider-specific state/configuration semantics. The drivers remain
+declarative and do not invoke Podman or own project/task lifecycle behavior.
 
 ## Responsibilities still in the broker daemon
 
-The CORE extraction intentionally does not move provider/runtime concerns yet.
-
-`agentdev/broker/daemon.py` still owns or orchestrates areas including:
+After concrete Codex/Cursor driver extraction, `agentdev/broker/daemon.py`
+continues to own or orchestrate runtime-facing concerns including:
 
 ```text
-provider selection
-Codex/Cursor state and authentication behavior
-provider command construction
-provider version/status behavior
-executor Podman invocation
+executor Podman argument construction and invocation
+workspace/reference/task metadata mount selection
+provider-state migration execution from driver metadata
+resource and network controls
 PTY and interactive executor streaming
-provider-specific sandbox compatibility
-provider/runtime smoke operations
+container lifecycle and cancellation
+image build/smoke orchestration
 ```
 
-These are the main inputs to the upcoming AgentDriver and runtime-backend
-extraction phases.
+Provider-native auth/status/version/run command syntax and provider-specific
+state/configuration metadata no longer belong to generic broker operations.
+These remaining runtime-facing responsibilities are the input to the runtime
+backend extraction phase.
 
 ## Frozen behavioral contracts
 
@@ -286,15 +297,19 @@ refactored broker.
 
 ## Next extraction boundary
 
-The completed CORE series provides the provider-neutral domain and RPC
-foundation for:
+The completed CORE series plus concrete Codex/Cursor drivers provide the
+foundation for the final driver-architecture proof:
 
 ```text
-MA2-DRV-001
-    AgentCapabilities
-    RunSpec
-    AgentDriver
+MA2-DRV-006
+    fake third-provider driver
+    different state target
+    different executable/version/auth commands
+    generic status/version/run-spec path
 ```
+
+After that regression passes, the next chapter is runtime backend extraction,
+beginning with `MA2-RT-001 — Define ResolvedExecutionPlan`.
 
 The next-stage extraction rule is:
 

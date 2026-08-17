@@ -1157,7 +1157,7 @@ plus the CORE-specific deterministic regressions.
 
 # Phase 2 — AgentDriver Contract
 
-Status: **In progress — MA2-DRV-001 and MA2-DRV-002 complete**
+Status: **In progress — MA2-DRV-001 through MA2-DRV-005 complete; MA2-DRV-006 next**
 
 ## Objective
 
@@ -1207,22 +1207,27 @@ with the trusted agent registry.
 
 ### Current implementation checkpoint
 
-The first two driver-phase cases are implemented:
+`MA2-DRV-001` through `MA2-DRV-005` are implemented:
 
-- `MA2-DRV-001` defines the provider-neutral `AgentDriver`,
-  `AgentCapabilities`, `RunSpec`, authentication/version/installation
-  specifications, and validated provider-state mount primitive;
-- `MA2-DRV-002` adds the explicit trusted in-tree `AgentRegistry` and replaces
-  generic broker provider enumeration/acceptance through
-  `ALLOWED_PROVIDERS`.
+- the provider-neutral `AgentDriver`, capability, state, authentication,
+  version, installation, policy-artifact, and run-spec contracts are defined;
+- the broker resolves providers through a fixed trusted in-tree `AgentRegistry`;
+- provider state layout, legacy migration metadata, native config targets, and
+  Cursor reconciliation metadata are driver-owned;
+- `CodexDriver` owns Codex auth/status/version, `codex exec`, sandbox selection,
+  outer-only compatibility, and Codex state/config metadata;
+- `CursorDriver` owns Cursor auth/status/version, `agent --trust` run
+  construction, split state/auth volumes, and `permissions` reconciliation
+  metadata.
 
-The built-in Codex and Cursor registrations are intentionally transitional:
-their identities are registry-owned, while provider state, authentication,
-command, policy, and runtime semantics still remain in the broker until the
-following extraction cases.
+The broker no longer needs transitional provider-command fallbacks for Codex or
+Cursor. Podman construction, resource/network/mount enforcement, process/PTY
+handling, and generic state-migration execution remain broker/runtime concerns
+until Phase 3.
 
-Next: `MA2-DRV-003` moves provider-state layout, migration, policy-target, and
-reconciliation semantics behind the driver/state-adapter boundary.
+Next: `MA2-DRV-006` adds a fake-driver extensibility regression proving that a
+third provider shape can pass generic broker status/version/run-spec flows
+without modifications to project/task/Git/runtime core.
 
 ### Exit Criteria
 
