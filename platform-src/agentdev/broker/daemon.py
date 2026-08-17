@@ -25,6 +25,17 @@ import time
 import uuid
 from pathlib import Path
 
+from agentdev.broker.rpc import (
+    ALLOWED_OPS,
+    REQUEST_FIELDS,
+    BrokerOperations,
+    handle_request,
+    recv_json_line,
+    send,
+    send_output,
+    serve_fd3,
+    validate_request_shape,
+)
 from agentdev.core.dependencies import validate_dependencies as validate_task_dependencies
 from agentdev.core.git_handoff import INTEGRATION_BRANCH
 from agentdev.core.locking import (
@@ -70,31 +81,7 @@ from agentdev.core.worktrees import BRANCH_PREFIX
 CONFIG_PATH = Path("/srv/agent-dev/platform/config/platform.json")
 ALLOWED_PROVIDERS = {"codex", "cursor"}
 PROVIDER_NETWORK_MODE = "slirp4netns:allow_host_loopback=false"
-ALLOWED_OPS = {
-    "ping", "build", "auth", "status", "versions", "smoke", "run", "index",
-    "project-init", "project-sync", "project-export", "project-status",
-    "task-start", "task-complete", "task-merge", "task-abort", "task-list",
-}
 AUTH_TIMEOUT_SECONDS = 900
-REQUEST_FIELDS = {
-    "ping": {"op"},
-    "build": {"op"},
-    "status": {"op"},
-    "versions": {"op"},
-    "smoke": {"op"},
-    "auth": {"op", "provider"},
-    "index": {"op", "project", "task"},
-    "run": {"op", "provider", "project", "task", "readonly", "outer_only", "prompt"},
-    "project-init": {"op", "project", "bundle"},
-    "project-sync": {"op", "project", "bundle"},
-    "project-export": {"op", "project"},
-    "project-status": {"op", "project"},
-    "task-start": {"op", "project", "task", "parallel", "dependencies"},
-    "task-complete": {"op", "project", "task"},
-    "task-merge": {"op", "project", "task"},
-    "task-abort": {"op", "project", "task"},
-    "task-list": {"op", "project"},
-}
 
 logging.basicConfig(level=logging.INFO, format="agentd %(levelname)s %(message)s")
 LOG = logging.getLogger("agentd")
@@ -111,36 +98,6 @@ def load_config() -> dict:
 def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
 
-
-def send(conn: socket.socket, obj: dict) -> None:
-    conn.sendall(json.dumps(obj, separators=(",", ":")).encode() + b"\n")
-
-
-def send_output(conn: socket.socket, data: bytes) -> None:
-    if data:
-        send(conn, {"type": "output", "data": base64.b64encode(data).decode()})
-
-
-def recv_json_line(fileobj) -> dict | None:
-    line = fileobj.readline()
-    if not line:
-        return None
-    if len(line) > 1024 * 1024:
-        raise RequestError("RPC frame too large")
-    try:
-        return json.loads(line)
-    except json.JSONDecodeError as exc:
-        raise RequestError("invalid JSON request") from exc
-
-
-def validate_request_shape(req: dict) -> None:
-    op = req.get("op")
-    if op not in ALLOWED_OPS:
-        raise RequestError("unsupported operation")
-    allowed = REQUEST_FIELDS[op]
-    unknown = set(req) - allowed
-    if unknown:
-        raise RequestError(f"unexpected RPC fields for {op}: {sorted(unknown)}")
 
 def project_root(cfg: dict, project: str) -> Path:
     return resolve_project_root(Path(cfg["root"]), project)
@@ -917,21 +874,14 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
         return rc
 
 
-def handle(conn: socket.socket, cfg: dict) -> None:
-    fileobj = conn.makefile("rb")
-    try:
-        req = recv_json_line(fileobj)
-        if req is None or not isinstance(req, dict):
-            raise RequestError("invalid request")
-        validate_request_shape(req)
-        op = req["op"]
-        try:
-            peer_pid, peer_uid, peer_gid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
-        except OSError:
-            peer_pid = peer_uid = peer_gid = -1
-        LOG.info("request uid=%s pid=%s op=%s project=%s task=%s provider=%s", peer_uid, peer_pid, op, req.get("project"), req.get("task"), req.get("provider"))
+def rpc_operations() -> BrokerOperations:
+    """Bind current daemon operation callables for RPC dispatch.
 
-        result_ops = {
+    The bindings are created per request so the frozen characterization tests can
+    continue monkeypatching operation globals on the compatibility entrypoint.
+    """
+    return BrokerOperations(
+        result_ops={
             "project-init": op_project_init,
             "project-sync": op_project_sync,
             "project-export": op_project_export,
@@ -941,56 +891,25 @@ def handle(conn: socket.socket, cfg: dict) -> None:
             "task-merge": op_task_merge,
             "task-abort": op_task_abort,
             "task-list": op_task_list,
-        }
-        if op == "ping":
-            send(conn, {"type": "result", "result": {"status": "ok", "uid": os.getuid()}, "code": 0})
-            return
-        if op in result_ops:
-            send(conn, {"type": "result", "result": result_ops[op](cfg, req), "code": 0})
-            return
-        if op in {"build", "status", "versions", "smoke", "index"}:
-            send(conn, {"type": "start", "interactive": False})
-            if op == "build": rc = op_build(cfg, conn)
-            elif op == "status": rc = op_status(cfg, conn)
-            elif op == "versions": rc = op_versions(cfg, conn)
-            elif op == "smoke": rc = op_smoke(cfg, conn)
-            else: rc = op_index(cfg, conn, req)
-            send(conn, {"type": "exit", "code": rc})
-            return
-        if op == "auth":
-            op_auth(cfg, conn, fileobj, req.get("provider"))
-            return
-        if op == "run":
-            op_run(cfg, conn, fileobj, req)
-            return
-    except RequestError as exc:
-        LOG.warning("request rejected: %s", exc)
-        try:
-            send(conn, {"type": "error", "message": str(exc), "code": 2})
-        except OSError:
-            pass
-    except Exception:
-        LOG.exception("request failed")
-        try:
-            send(conn, {"type": "error", "message": "internal broker error", "code": 1})
-        except OSError:
-            pass
+        },
+        build=op_build,
+        status=op_status,
+        versions=op_versions,
+        smoke=op_smoke,
+        index=op_index,
+        auth=op_auth,
+        run=op_run,
+    )
+
+
+def handle(conn: socket.socket, cfg: dict) -> None:
+    """Compatibility wrapper around the packaged broker RPC server boundary."""
+    handle_request(conn, cfg, rpc_operations(), logger=LOG)
 
 
 def main() -> None:
-    import threading
     cfg = load_config()
-    listener = socket.socket(fileno=3)
-
-    def serve(conn: socket.socket) -> None:
-        try:
-            handle(conn, cfg)
-        finally:
-            conn.close()
-
-    while True:
-        conn, _ = listener.accept()
-        threading.Thread(target=serve, args=(conn,), daemon=True).start()
+    serve_fd3(cfg, handle)
 
 
 if __name__ == "__main__":

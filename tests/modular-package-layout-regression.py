@@ -38,6 +38,7 @@ def main() -> None:
 
     daemon_impl = PACKAGE / "broker" / "daemon.py"
     cli_impl = PACKAGE / "broker" / "cli.py"
+    rpc_impl = PACKAGE / "broker" / "rpc.py"
     core_models = PACKAGE / "core" / "models.py"
     core_validation = PACKAGE / "core" / "validation.py"
     core_projects = PACKAGE / "core" / "projects.py"
@@ -48,6 +49,7 @@ def main() -> None:
     core_locking = PACKAGE / "core" / "locking.py"
     assert daemon_impl.is_file()
     assert cli_impl.is_file()
+    assert rpc_impl.is_file()
     assert core_models.is_file()
     assert core_validation.is_file()
     assert core_projects.is_file()
@@ -86,10 +88,11 @@ def main() -> None:
 
     sys.path.insert(0, str(PLATFORM))
     try:
-        from agentdev.broker import cli, daemon
+        from agentdev.broker import cli, daemon, rpc
 
         assert hasattr(daemon, "main") and hasattr(daemon, "handle")
         assert hasattr(cli, "main") and hasattr(cli, "parser")
+        assert hasattr(rpc, "handle_request") and hasattr(rpc, "BrokerOperations")
     finally:
         sys.path.pop(0)
 
