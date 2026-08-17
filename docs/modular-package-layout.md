@@ -1,15 +1,19 @@
 # Modular Package Layout
 
-Status: **Implemented by MA2-CORE-001**
+Status: **Implemented through MA2-CORE-006**
 
-This document records the first structural step of the v0.2 modularization.
-It describes the physical Python package and compatibility-entrypoint boundary
-after `MA2-CORE-001`. It does not claim that the later CORE, execution, policy,
-runtime, or provider responsibilities have already been extracted.
+This document records the implemented Python package and compatibility-entrypoint
+boundary after the completed CORE extraction series.
 
-## Package structure
+`MA2-CORE-001` through `MA2-CORE-006` preserve the frozen v0.1 external
+behavior while moving provider-neutral lifecycle and RPC responsibilities behind
+package-level APIs.
 
-The platform source tree now contains an importable `agentdev` package:
+The AgentDriver, runtime-backend, execution-policy, and provider-registry layers
+are not yet implemented. They remain the next migration stages described in
+`docs/multi-agent-architecture-v0.2.md`.
+
+## Current package structure
 
 ```text
 platform-src/
@@ -20,9 +24,18 @@ platform-src/
 │   ├── broker/
 │   │   ├── __init__.py
 │   │   ├── cli.py
-│   │   └── daemon.py
+│   │   ├── daemon.py
+│   │   └── rpc.py
 │   ├── core/
-│   │   └── __init__.py
+│   │   ├── __init__.py
+│   │   ├── models.py
+│   │   ├── validation.py
+│   │   ├── projects.py
+│   │   ├── git_handoff.py
+│   │   ├── tasks.py
+│   │   ├── dependencies.py
+│   │   ├── worktrees.py
+│   │   └── locking.py
 │   ├── execution/
 │   │   └── __init__.py
 │   ├── policy/
@@ -34,18 +47,12 @@ platform-src/
     └── agentd
 ```
 
-At this stage, the existing controller and broker implementations live under:
+`agents`, `execution`, `policy`, and `runtime` are structural package
+boundaries for subsequent migration phases. They should not yet be interpreted
+as implemented driver, execution-plan, policy-engine, or runtime-backend
+subsystems.
 
-```text
-platform-src/agentdev/broker/cli.py
-platform-src/agentdev/broker/daemon.py
-```
-
-The other package namespaces are intentionally present as structural anchors
-for later extraction cases; they should not yet be interpreted as complete
-architectural boundaries.
-
-## Entrypoint compatibility
+## Public entrypoint boundary
 
 The public executable entrypoints remain:
 
@@ -54,91 +61,190 @@ platform-src/bin/agentctl
 platform-src/bin/agentd
 ```
 
-They are compatibility loaders rather than the authoritative implementation
-files.
+They are compatibility loaders rather than authoritative implementation files.
 
-This distinction is important for tests and source-level audits:
+The current packaged implementation boundaries are:
 
-- runtime/compatibility tests may continue to execute or load the public
-  entrypoints;
-- source-level semantic checks should inspect the packaged implementation files
-  under `agentdev/broker`;
-- later extraction cases should move responsibilities from `broker` into the
-  dedicated package namespaces without changing the public CLI/RPC contract
-  unless a backlog case explicitly requires such a change.
+```text
+controller implementation
+    -> platform-src/agentdev/broker/cli.py
 
-The compatibility loader exists to preserve the frozen v0.1 regression behavior
-during the mechanical migration. In particular, existing tests that monkeypatch
-entrypoint module globals must continue to work until those tests are migrated
-to package-level APIs.
+broker operation/orchestration implementation
+    -> platform-src/agentdev/broker/daemon.py
 
-## Behavior preserved by CORE-001
+generic broker RPC boundary
+    -> platform-src/agentdev/broker/rpc.py
+```
 
-`MA2-CORE-001` is a structural change only. The following contracts remain
-frozen by the pre-CORE baseline:
+Runtime/compatibility tests may continue to execute or load the public
+entrypoints. Source-level semantic checks and audits should inspect the package
+module that owns the behavior being tested.
+
+The compatibility loaders preserve the frozen v0.1 regression surface during
+the migration, including tests that monkeypatch entrypoint module globals.
+
+## Implemented CORE responsibilities
+
+### Shared models and validation
+
+```text
+agentdev/core/models.py
+agentdev/core/validation.py
+```
+
+These modules own provider-neutral project/task context structures and shared
+identifier, Git-branch, and canonical-path validation.
+
+Compatibility exports required by the frozen v0.1 tests remain available
+through the broker entrypoint where necessary.
+
+### Project and Git handoff
+
+```text
+agentdev/core/projects.py
+agentdev/core/git_handoff.py
+```
+
+These modules own provider-neutral project path resolution, repository
+initialization/synchronization, Git bundle validation and handoff, integration
+export, and project Git status.
+
+The human/agent Git trust boundary is unchanged: human-side controller code
+creates and consumes bundles but does not directly operate the agent-owned
+repository.
+
+### Task, dependency, and worktree lifecycle
+
+```text
+agentdev/core/tasks.py
+agentdev/core/dependencies.py
+agentdev/core/worktrees.py
+```
+
+These modules own task metadata and state transitions, dependency validation,
+parallel branch/worktree preparation, recorded-head validation, merge, and
+abort mechanics.
+
+Provider execution remains outside these modules.
+
+### Locking
+
+```text
+agentdev/core/locking.py
+```
+
+The locking service owns lock paths, shared/exclusive `flock` acquisition, and
+provider-neutral lock-selection helpers.
+
+The established lock semantics remain unchanged, including
+integration-before-task acquisition order for merge and abort flows.
+
+### Broker RPC
+
+```text
+agentdev/broker/rpc.py
+```
+
+The RPC module owns request decoding, request-shape validation, public operation
+dispatch, peer metadata, response/error framing, start/exit/output framing, and
+fd-3 socket serving.
+
+`daemon.py` supplies concrete operation callables per request. This preserves
+the frozen characterization-test behavior in which operation globals can be
+monkeypatched through the compatibility entrypoint.
+
+## Responsibilities still in the broker daemon
+
+The CORE extraction intentionally does not move provider/runtime concerns yet.
+
+`agentdev/broker/daemon.py` still owns or orchestrates areas including:
+
+```text
+provider selection
+Codex/Cursor state and authentication behavior
+provider command construction
+provider version/status behavior
+executor Podman invocation
+PTY and interactive executor streaming
+provider-specific sandbox compatibility
+provider/runtime smoke operations
+```
+
+These are the main inputs to the upcoming AgentDriver and runtime-backend
+extraction phases.
+
+## Frozen behavioral contracts
+
+The CORE series is structural. The following remain frozen across
+`MA2-CORE-001` through `MA2-CORE-006`:
 
 - public `agentctl` command-line behavior;
 - broker RPC operation and request-field compatibility;
 - provider invocation commands and executor envelope;
-- task lifecycle and Git trust-boundary semantics;
+- sequential and parallel task lifecycle semantics;
+- dependency and recorded-head semantics;
+- human/agent Git trust boundary;
+- lock modes and lock ordering;
 - deterministic package acceptance;
 - currently closed executor-security guarantees;
-- explicitly open credential-confidentiality and destination-egress findings.
+- explicit credential-confidentiality and destination-egress open findings.
 
-A change in any of those behaviors is not part of `CORE-001` and should be
-handled by a separate backlog item with its own characterization or acceptance
-coverage.
+A change in these contracts is not implied by the CORE modularization.
 
 ## Testing implications
 
-The deterministic acceptance command remains:
+The authoritative deterministic T3 acceptance command remains:
 
 ```bash
 ./tests/package-check.sh
 ```
 
-Relevant modularization regressions include:
+CORE-specific deterministic regressions now include:
 
 ```text
 tests/modular-package-layout-regression.py
+tests/core-validation-regression.py
+tests/project-git-handoff-regression.py
+tests/task-lifecycle-core-regression.py
+tests/locking-service-regression.py
+tests/broker-rpc-server-regression.py
+```
+
+They complement the frozen characterization and security tests, including:
+
+```text
 tests/security-regression.py
 tests/broker-rpc-contract-regression.py
 tests/provider-invocation-regression.py
+tests/dependency-semantics-regression.py
+tests/parallel-lifecycle-regression.py
+tests/locking-concurrency-regression.py
 tests/executor-security-baseline.py
 ```
 
-Source-level tests must follow the implementation location rather than assuming
-that `platform-src/bin/agentctl` or `platform-src/bin/agentd` contains the full
-implementation.
+Source-level tests must follow implementation ownership rather than assuming
+that the thin `platform-src/bin/agentctl` or `platform-src/bin/agentd` files
+contain the full implementation.
 
-For example:
-
-```text
-controller semantic source
-    -> platform-src/agentdev/broker/cli.py
-
-broker semantic source
-    -> platform-src/agentdev/broker/daemon.py
-
-public compatibility entrypoints
-    -> platform-src/bin/agentctl
-    -> platform-src/bin/agentd
-```
+The executor security audit is expected to remain behaviorally stable during
+this structural stage. A change in its PASS/WARN/FAIL findings should be
+reviewed rather than accepted as an incidental refactor result.
 
 ## Deployment requirement
 
-Because the executable entrypoints now load Python files outside
-`platform-src/bin`, deployment must install the `platform-src/agentdev` package
-together with the entrypoints.
+Deployment must install the complete `platform-src/agentdev` package together
+with the thin entrypoints.
 
-A post-bootstrap deployment should therefore contain at least:
+A post-bootstrap deployment should contain, at minimum:
 
 ```text
 /srv/agent-dev/platform/agentdev/broker/cli.py
 /srv/agent-dev/platform/agentdev/broker/daemon.py
+/srv/agent-dev/platform/agentdev/broker/rpc.py
+/srv/agent-dev/platform/agentdev/core/
 ```
 
-and the normal runtime checks must continue to succeed:
+and normal runtime checks must continue to succeed:
 
 ```bash
 agentctl ping
@@ -147,15 +253,28 @@ agentctl smoke
 agentctl status
 ```
 
+The public CLI must not require an RPC protocol change to communicate with the
+refactored broker.
+
 ## Next extraction boundary
 
-`MA2-CORE-002` may now begin extracting shared validation and domain models from
-the packaged implementation.
+The completed CORE series provides the provider-neutral domain and RPC
+foundation for:
 
-The extraction rule is:
+```text
+MA2-DRV-001
+    AgentCapabilities
+    RunSpec
+    AgentDriver
+```
 
-1. preserve the frozen public and behavioral contracts;
-2. move shared concepts behind package-level APIs;
-3. keep entrypoints thin;
-4. keep tests pointed at the authoritative implementation boundary;
-5. avoid mixing structural extraction with policy or runtime behavior changes.
+The next-stage extraction rule is:
+
+1. keep project/task/Git/locking behavior provider-neutral;
+2. move provider-specific state, authentication, version, command, and sandbox
+   semantics behind the driver contract;
+3. preserve the frozen provider invocation contract unless a backlog item
+   explicitly changes it;
+4. keep Podman/runtime execution separate from provider-driver semantics;
+5. do not promote current credential or network warnings into hardened claims
+   without observable enforcement and acceptance tests.

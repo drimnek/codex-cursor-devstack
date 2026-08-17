@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-This document defines the proposed v0.2 architecture for the local constrained coding-agent development stack.
+This document defines the target v0.2 architecture for the local constrained coding-agent development stack and records the current migration state.
 
 The current v0.1 implementation provides a strong foundation:
 
@@ -28,6 +28,31 @@ The secondary goal is:
 > Replace provider configuration as the source of security semantics with a broker-owned, provider-neutral execution policy.
 
 The v0.2 design remains intentionally local and constrained. It is not intended to become a generic scheduler, CI platform, distributed agent framework, or arbitrary container orchestration system.
+
+### Current implementation checkpoint
+
+The baseline freeze and the mechanical CORE modularization are complete through
+`MA2-CORE-006`.
+
+The implementation now has:
+
+```text
+thin agentctl/agentd compatibility entrypoints
+packaged broker/controller implementation
+dedicated broker RPC boundary
+
+provider-neutral:
+    validation and domain models
+    project and Git handoff services
+    task, dependency, and worktree services
+    locking service
+```
+
+The AgentDriver, runtime-backend, execution-policy, and provider-registry layers
+described below remain target architecture. Provider-specific execution and
+Podman runtime behavior still reside in the broker daemon and are the next
+extraction boundaries.
+
 
 ---
 
@@ -929,7 +954,58 @@ They must not redefine the platform security contract.
 
 ---
 
-# 18. Proposed Source Tree
+# 18. Source Tree: Current CORE Layout and Target
+
+The implemented package layout after `MA2-CORE-006` is:
+
+```text
+platform-src/
+├── agentdev/
+│   ├── broker/
+│   │   ├── cli.py
+│   │   ├── daemon.py
+│   │   └── rpc.py
+│   │
+│   ├── core/
+│   │   ├── models.py
+│   │   ├── validation.py
+│   │   ├── projects.py
+│   │   ├── git_handoff.py
+│   │   ├── tasks.py
+│   │   ├── dependencies.py
+│   │   ├── worktrees.py
+│   │   └── locking.py
+│   │
+│   ├── agents/
+│   ├── execution/
+│   ├── policy/
+│   └── runtime/
+│
+└── bin/
+    ├── agentctl
+    └── agentd
+```
+
+`platform-src/bin/agentd` and `platform-src/bin/agentctl` are thin compatibility
+entrypoints.
+
+At this checkpoint:
+
+```text
+broker/rpc.py
+    owns RPC decoding, validation, dispatch, framing, and socket serving
+
+core/*
+    owns provider-neutral project/task/Git/worktree/dependency/locking behavior
+
+broker/daemon.py
+    still owns provider-specific execution and current Podman/runtime behavior
+```
+
+`agents`, `execution`, `policy`, and `runtime` are currently package boundaries
+for later migration phases rather than completed subsystems.
+
+The broader target source tree remains:
 
 ```text
 platform-src/
@@ -993,15 +1069,16 @@ platform-src/
             Containerfile
 ```
 
-`platform-src/bin/agentd` and `platform-src/bin/agentctl` become thin executable entrypoints.
-
-The system remains one broker daemon rather than being split into microservices.
+The system remains one broker daemon rather than being split into
+microservices.
 
 ---
 
 # 19. Migration Roadmap
 
 ## Phase 0 — Baseline Freeze
+
+Status: **Complete**
 
 ### Objective
 
@@ -1029,27 +1106,28 @@ no architecture migration begins on an unstable baseline
 
 # Phase 1 — Mechanical Broker Modularization
 
+Status: **Complete**
+
 ## Objective
 
 Split the current `agentd` implementation into internal modules without changing externally observable behavior.
 
-## Work
+## Implemented Work
 
-Extract:
+Extracted:
 
 ```text
+shared validation and domain models
 projects
-tasks
 Git handoff
+tasks
+dependencies
 worktrees
 locking
-Podman runtime
-RPC validation
+RPC validation, framing, dispatch, and socket serving
 ```
 
-Keep Codex/Cursor behavior unchanged.
-
-Introduce internal models for:
+Introduced provider-neutral internal models including:
 
 ```text
 ProjectContext
@@ -1057,6 +1135,12 @@ TaskContext
 ExecutorSpec
 ProviderStateSpec
 ```
+
+Kept Codex/Cursor invocation behavior unchanged.
+
+Podman/runtime extraction is intentionally deferred to Phase 3. Provider-specific
+execution remains in the broker daemon until the AgentDriver and runtime
+boundaries are implemented.
 
 ### Important Constraint
 
@@ -1066,9 +1150,14 @@ No new provider and no new policy semantics are introduced in this phase.
 
 Existing v0.1 acceptance tests pass unchanged or with purely structural test adjustments.
 
+This exit criterion is satisfied by the frozen pre-CORE characterization tests
+plus the CORE-specific deterministic regressions.
+
 ---
 
 # Phase 2 — AgentDriver Contract
+
+Status: **Next**
 
 ## Objective
 
@@ -1482,16 +1571,16 @@ None of these should be implemented solely because the new architecture makes th
 The practical sequence is:
 
 ```text
-0. freeze baseline
+0. freeze baseline                                      [complete]
 
-1. modularize agentd
+1. modularize agentd                                    [complete]
 
-2. extract CodexDriver
-3. extract CursorDriver
+2. define AgentDriver / AgentCapabilities / RunSpec     [next]
+3. extract CodexDriver
+4. extract CursorDriver
 
-4. extract PodmanBackend
+5. extract PodmanBackend
 
-5. introduce capability model
 6. introduce execution profiles
 7. introduce provider-neutral policy
 

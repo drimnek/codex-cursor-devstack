@@ -1,11 +1,16 @@
 # Pre-CORE Baseline Checkpoint
 
-Status: **Frozen pre-refactor baseline**
+Status: **Frozen pre-refactor baseline — preserved through MA2-CORE-006**
 
-This document records the implementation state that must remain behaviorally
-stable while the v0.2 CORE modularization begins. It is a checkpoint, not a
-replacement for `docs/multi-agent-architecture-v0.2.md` or
+This document records the implementation state that had to remain behaviorally
+stable while the v0.2 CORE modularization was performed. It remains the
+historical pre-refactor checkpoint and is not a replacement for
+`docs/multi-agent-architecture-v0.2.md`, `docs/modular-package-layout.md`, or
 `docs/executor-boundary-audit.md`.
+
+`MA2-CORE-001` through `MA2-CORE-006` completed without intentionally changing
+this baseline. Current package/module ownership is documented in
+`docs/modular-package-layout.md`.
 
 ## Completed baseline work
 
@@ -21,9 +26,10 @@ The pre-CORE baseline now covers:
 - executor security baseline regression checks;
 - persistent Cursor XDG authentication state under a scoped provider volume.
 
-These checks exist to make the upcoming package/module extraction mechanical:
-moving code must not silently change the public RPC surface, provider commands,
-Git/task lifecycle behavior, or already-closed executor boundaries.
+These checks were established to make the package/module extraction
+mechanical: moving code must not silently change the public RPC surface,
+provider commands, Git/task lifecycle behavior, or already-closed executor
+boundaries.
 
 ## Current provider state layout
 
@@ -102,9 +108,15 @@ Those open findings must remain explicit `WARN`/limitation-level statements
 until later security requirements close them with observable enforcement and
 adversarial acceptance tests.
 
-## CORE transition rule
+## CORE transition outcome
 
-`MA2-CORE-001` and the following mechanical extraction cases must preserve this
-baseline. Documentation should only claim the new package/module layout after
-the corresponding implementation case is applied and passes deterministic plus
-required runtime acceptance.
+`MA2-CORE-001` through `MA2-CORE-006` preserved this baseline while extracting
+provider-neutral validation, project/Git lifecycle, task/dependency/worktree
+lifecycle, locking, and RPC responsibilities into package-level modules.
+
+This document should now remain stable as the historical pre-refactor
+reference. Current implementation ownership is documented in
+`docs/modular-package-layout.md`.
+
+Subsequent AgentDriver, runtime, and policy work must continue to preserve the
+relevant frozen contracts unless a backlog item explicitly changes them.
