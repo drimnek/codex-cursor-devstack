@@ -42,12 +42,18 @@ def main() -> None:
     core_validation = PACKAGE / "core" / "validation.py"
     core_projects = PACKAGE / "core" / "projects.py"
     core_git_handoff = PACKAGE / "core" / "git_handoff.py"
+    core_tasks = PACKAGE / "core" / "tasks.py"
+    core_dependencies = PACKAGE / "core" / "dependencies.py"
+    core_worktrees = PACKAGE / "core" / "worktrees.py"
     assert daemon_impl.is_file()
     assert cli_impl.is_file()
     assert core_models.is_file()
     assert core_validation.is_file()
     assert core_projects.is_file()
     assert core_git_handoff.is_file()
+    assert core_tasks.is_file()
+    assert core_dependencies.is_file()
+    assert core_worktrees.is_file()
 
     for entrypoint in (PLATFORM / "bin" / "agentd", PLATFORM / "bin" / "agentctl"):
         source = entrypoint.read_text(encoding="utf-8")

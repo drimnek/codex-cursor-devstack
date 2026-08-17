@@ -26,8 +26,8 @@ import time
 import uuid
 from pathlib import Path
 
+from agentdev.core.dependencies import validate_dependencies as validate_task_dependencies
 from agentdev.core.git_handoff import INTEGRATION_BRANCH
-from agentdev.core.models import TaskContext
 from agentdev.core.projects import (
     export_agent_project,
     initialize_agent_project,
@@ -44,6 +44,23 @@ from agentdev.core.validation import (
     valid_git_branch,
     valid_name,
 )
+from agentdev.core.tasks import (
+    abort_task_locked,
+    active_sequential,
+    complete_task_locked,
+    load_task as load_task_context,
+    merge_task_locked,
+    pending_parallel,
+    prepare_task_start_request,
+    prepare_task_start_target,
+    start_task_locked,
+    task_meta_path,
+    task_records,
+    validate_task_abort,
+    validate_task_completion,
+    validate_task_merge,
+)
+from agentdev.core.worktrees import BRANCH_PREFIX
 
 CONFIG_PATH = Path("/srv/agent-dev/platform/config/platform.json")
 ALLOWED_PROVIDERS = {"codex", "cursor"}
@@ -53,7 +70,6 @@ ALLOWED_OPS = {
     "project-init", "project-sync", "project-export", "project-status",
     "task-start", "task-complete", "task-merge", "task-abort", "task-list",
 }
-BRANCH_PREFIX = "agent/"
 AUTH_TIMEOUT_SECONDS = 900
 REQUEST_FIELDS = {
     "ping": {"op"},
@@ -162,55 +178,9 @@ def ensure_clean(repo: Path, label: str) -> None:
         raise ValueError(f"{label} has uncommitted or untracked changes")
 
 
-def task_records(pp: dict[str, Path]) -> list[dict]:
-    records = []
-    for path in sorted(pp["tasks"].glob("*.json")):
-        try:
-            records.append(json.loads(path.read_text()))
-        except Exception:
-            continue
-    return records
-
-
-def active_sequential(records: list[dict]) -> list[dict]:
-    return [r for r in records if r.get("mode") == "integration" and r.get("status") == "active"]
-
-
-def pending_parallel(records: list[dict]) -> list[dict]:
-    return [r for r in records if r.get("mode") == "parallel" and r.get("status") in {"active", "completed"}]
-
-
-def task_meta_path(pp: dict[str, Path], task: str) -> Path:
-    task = valid_name(task, "task")
-    return pp["tasks"] / f"{task}.json"
-
-
 def load_task(cfg: dict, project: str, task: str) -> tuple[dict, dict[str, Path], Path]:
-    task = valid_name(task, "task")
-    pp = project_paths(cfg, project)
-    meta_path = canonical_file(task_meta_path(pp, task), pp["tasks"], "task metadata")
-    rec = read_json(meta_path, "task metadata")
-    if rec.get("project") != project or rec.get("task") != task:
-        raise ValueError("task metadata identity mismatch")
-    mode = rec.get("mode")
-    status = rec.get("status")
-    if mode not in {"integration", "parallel"}:
-        raise ValueError("unsupported task mode")
-    if status == "aborted":
-        raise RequestError("task is aborted")
-    ws = pp["agent"] if mode == "integration" or status == "merged" else pp["worktrees"] / task
-    ws_root = pp["agent"] if mode == "integration" or status == "merged" else pp["worktrees"]
-    ws = canonical_dir(ws, ws_root if mode == "parallel" and status != "merged" else pp["root"], "task workspace")
-    context = TaskContext(
-        project=project,
-        task=task,
-        mode=mode,
-        status=status,
-        metadata_path=meta_path,
-        workspace=ws,
-        record=rec,
-    )
-    return context.record, pp, context.workspace
+    """Compatibility wrapper around the provider-neutral task loader."""
+    return load_task_context(Path(cfg["root"]), project, task, read_json=read_json)
 
 
 @contextlib.contextmanager
@@ -590,148 +560,97 @@ def op_project_export(cfg: dict, req: dict) -> dict:
     return result
 
 def validate_dependencies(pp: dict[str, Path], dependencies: list[str], base_commit: str) -> None:
-    for dep in dependencies:
-        path = task_meta_path(pp, dep)
-        if not path.exists():
-            raise RequestError(f"dependency metadata does not exist: {dep}")
-        dep_rec = read_json(path, "dependency metadata")
-        mode = dep_rec.get("mode")
-        status = dep_rec.get("status")
-        if mode == "parallel":
-            if status != "merged":
-                raise RequestError(f"parallel dependency {dep} must be merged, got {status!r}")
-            required_commit = dep_rec.get("merge_commit")
-        elif mode == "integration":
-            if status != "completed":
-                raise RequestError(f"integration dependency {dep} must be completed, got {status!r}")
-            required_commit = dep_rec.get("head_commit")
-        else:
-            raise ValueError(f"dependency {dep} has unsupported mode {mode!r}")
-        if not isinstance(required_commit, str) or not required_commit:
-            raise ValueError(f"dependency {dep} has no recorded integrated commit")
-        if git(pp["agent"], "merge-base", "--is-ancestor", required_commit, base_commit, check=False).returncode != 0:
-            raise RequestError(f"dependency {dep} commit is not present in the current integration base")
+    """Compatibility wrapper around provider-neutral dependency validation."""
+    validate_task_dependencies(
+        pp,
+        dependencies,
+        base_commit,
+        read_json=read_json,
+        git=git,
+    )
 
 def op_task_start(cfg: dict, req: dict) -> dict:
     project = valid_name(req.get("project"), "project")
-    task = valid_name(req.get("task"), "task")
-    parallel = bool(req.get("parallel", False))
-    dependencies_raw = req.get("dependencies", [])
-    if not isinstance(dependencies_raw, list) or len(dependencies_raw) > 128:
-        raise RequestError("dependencies must be a list")
-    dependencies = [valid_name(x, "dependency") for x in dependencies_raw]
-    if task in dependencies:
-        raise RequestError("a task cannot depend on itself")
+    task, parallel, dependencies = prepare_task_start_request(
+        req.get("task"),
+        req.get("parallel", False),
+        req.get("dependencies", []),
+    )
     pp = project_paths(cfg, project)
-    ensure_git_repo(pp["agent"], "repo/agent")
-    path = task_meta_path(pp, task)
-    if path.exists():
-        raise RequestError("task metadata already exists")
-
+    metadata_path = prepare_task_start_target(pp, task)
     with lock_one(pp, "integration", False):
-        ensure_clean(pp["agent"], "repo/agent")
-        git(pp["agent"], "switch", INTEGRATION_BRANCH)
-        base = git_text(pp["agent"], "rev-parse", "HEAD")
-        validate_dependencies(pp, dependencies, base)
-        records = task_records(pp)
-        if parallel:
-            if active_sequential(records):
-                raise RequestError("cannot start a parallel task while an integration task is active")
-            branch = f"{BRANCH_PREFIX}{task}"
-            worktree = pp["worktrees"] / task
-            if worktree.exists():
-                raise RequestError(f"worktree path already exists: {worktree}")
-            git(pp["agent"], "worktree", "add", "-b", branch, worktree, INTEGRATION_BRANCH)
-            mode = "parallel"
-            workspace = str(worktree)
-        else:
-            if active_sequential(records):
-                raise RequestError("another integration task is already active")
-            if pending_parallel(records):
-                raise RequestError("parallel tasks must be merged/aborted before sequential work continues")
-            branch = INTEGRATION_BRANCH
-            mode = "integration"
-            workspace = str(pp["agent"])
-
-        rec = {
-            "project": project, "task": task, "mode": mode, "branch": branch,
-            "base_commit": base, "head_commit": None, "status": "active",
-            "dependencies": dependencies, "started_at": now_iso(),
-            "completed_at": None, "merged_at": None, "workspace": workspace,
-        }
-        write_json(path, rec)
-    return rec
+        return start_task_locked(
+            pp,
+            project,
+            task,
+            parallel,
+            dependencies,
+            metadata_path,
+            records_reader=task_records,
+            active_sequential_filter=active_sequential,
+            pending_parallel_filter=pending_parallel,
+            dependency_validator=validate_dependencies,
+            write_json=write_json,
+            git=git,
+            git_text=git_text,
+            now_iso=now_iso,
+        )
 
 
 def op_task_complete(cfg: dict, req: dict) -> dict:
     project = valid_name(req.get("project"), "project")
     task = valid_name(req.get("task"), "task")
     rec, pp, ws = load_task(cfg, project, task)
-    if rec.get("status") != "active":
-        raise RequestError("task status must be active")
+    validate_task_completion(rec)
     lock_name = "integration" if rec["mode"] == "integration" else task
     with lock_one(pp, lock_name, False):
-        ensure_clean(ws, "task workspace")
-        branch = git_text(ws, "branch", "--show-current")
-        if branch != rec["branch"]:
-            raise RequestError(f"task workspace branch mismatch: {branch!r}")
-        rec["head_commit"] = git_text(ws, "rev-parse", "HEAD")
-        rec["status"] = "completed"
-        rec["completed_at"] = now_iso()
-        write_json(task_meta_path(pp, task), rec)
-    return rec
+        return complete_task_locked(
+            pp,
+            task,
+            rec,
+            ws,
+            write_json=write_json,
+            git_text=git_text,
+            now_iso=now_iso,
+        )
 
 
 def op_task_merge(cfg: dict, req: dict) -> dict:
     project = valid_name(req.get("project"), "project")
     task = valid_name(req.get("task"), "task")
     rec, pp, ws = load_task(cfg, project, task)
-    if rec.get("mode") != "parallel" or rec.get("status") != "completed":
-        raise RequestError("task-merge requires a completed parallel task")
+    validate_task_merge(rec)
     # Integration lock serializes merges; task lock prevents concurrent review/write.
     with lock_one(pp, "integration", False):
         with lock_one(pp, task, False):
-            ensure_clean(ws, "parallel task worktree")
-            ensure_clean(pp["agent"], "repo/agent")
-            recorded_head = rec.get("head_commit")
-            if not isinstance(recorded_head, str) or not recorded_head:
-                raise ValueError("completed parallel task has no recorded head_commit")
-            branch_head = git_text(pp["agent"], "rev-parse", rec["branch"])
-            workspace_head = git_text(ws, "rev-parse", "HEAD")
-            if branch_head != recorded_head or workspace_head != recorded_head:
-                raise RequestError("parallel task branch changed after completion; re-complete the task before merging")
-            git(pp["agent"], "switch", INTEGRATION_BRANCH)
-            result = git(pp["agent"], "merge", "--no-ff", "--no-edit", recorded_head, check=False)
-            if result.returncode != 0:
-                git(pp["agent"], "merge", "--abort", check=False)
-                raise RequestError("merge failed or conflicted; integration branch restored")
-            merge_commit = git_text(pp["agent"], "rev-parse", "HEAD")
-            git(pp["agent"], "worktree", "remove", ws)
-            git(pp["agent"], "branch", "-d", rec["branch"])
-            rec["status"] = "merged"
-            rec["merged_at"] = now_iso()
-            rec["merge_commit"] = merge_commit
-            rec["workspace"] = str(pp["agent"])
-            write_json(task_meta_path(pp, task), rec)
-    return rec
+            return merge_task_locked(
+                pp,
+                task,
+                rec,
+                ws,
+                write_json=write_json,
+                git=git,
+                git_text=git_text,
+                now_iso=now_iso,
+            )
 
 
 def op_task_abort(cfg: dict, req: dict) -> dict:
     project = valid_name(req.get("project"), "project")
     task = valid_name(req.get("task"), "task")
     rec, pp, ws = load_task(cfg, project, task)
-    if rec.get("mode") != "parallel" or rec.get("status") not in {"active", "completed"}:
-        raise RequestError("only active/completed parallel tasks can be aborted")
+    validate_task_abort(rec)
     with lock_one(pp, "integration", False):
         with lock_one(pp, task, False):
-            if ws.exists():
-                git(pp["agent"], "worktree", "remove", "--force", ws)
-            if git(pp["agent"], "show-ref", "--verify", "--quiet", f"refs/heads/{rec['branch']}", check=False).returncode == 0:
-                git(pp["agent"], "branch", "-D", rec["branch"])
-            rec["status"] = "aborted"
-            rec["aborted_at"] = now_iso()
-            write_json(task_meta_path(pp, task), rec)
-    return rec
+            return abort_task_locked(
+                pp,
+                task,
+                rec,
+                ws,
+                write_json=write_json,
+                git=git,
+                now_iso=now_iso,
+            )
 
 
 def op_task_list(cfg: dict, req: dict) -> list[dict]:
