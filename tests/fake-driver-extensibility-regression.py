@@ -243,10 +243,16 @@ def test_generic_auth_and_run_consume_fake_specs() -> None:
             agentd,
             AGENT_REGISTRY=fake_registry(),
             seed_provider_home=lambda _cfg, _provider: None,
-            new_interactive_cidfile=lambda _cfg: cidfile,
-            add_cidfile=lambda argv, _cidfile: argv,
             send=lambda _conn, frame: frames.append(frame),
-            stream_interactive=interactive_auth,
+            execute_runtime_argv=(
+                lambda _cfg, conn, fileobj, argv, **kwargs:
+                interactive_auth(
+                    conn,
+                    fileobj,
+                    argv,
+                    timeout_seconds=kwargs.get("timeout_seconds"),
+                )
+            ),
         ):
             assert agentd.op_auth(cfg, object(), io.BytesIO(), FAKE_ID) == 0
         assert auth_calls

@@ -225,6 +225,38 @@ def run_interactive_argv(
         os.close(master)
 
 
+def run_podman_argv(
+    argv: list[str],
+    io: RuntimeIO,
+    *,
+    state_dir: Path,
+    interactive: bool,
+    cwd=None,
+    env=None,
+    timeout_seconds: float | None = None,
+    timeout_output: bytes | None = None,
+) -> RuntimeResult:
+    """Execute raw Podman argv behind the runtime process-control boundary."""
+    if type(interactive) is not bool:
+        raise ValueError("interactive must be boolean")
+    if not interactive:
+        if timeout_seconds is not None:
+            raise ValueError("noninteractive execution does not support timeout_seconds")
+        return run_noninteractive_argv(argv, io, cwd=cwd, env=env)
+
+    cidfile = new_interactive_cidfile(Path(state_dir))
+    argv = add_cidfile(argv, cidfile)
+    return run_interactive_argv(
+        argv,
+        io,
+        cwd=cwd,
+        env=env,
+        timeout_seconds=timeout_seconds,
+        timeout_output=timeout_output,
+        cidfile=cidfile,
+    )
+
+
 class PodmanBackend(RuntimeBackend):
     """Execute resolved plans with the rootless Podman runtime."""
 
@@ -235,10 +267,9 @@ class PodmanBackend(RuntimeBackend):
         return "podman"
 
     def execute(self, plan: ResolvedExecutionPlan, io: RuntimeIO) -> RuntimeResult:
-        argv = execution_plan_argv(plan)
-        if plan.interaction_mode == "noninteractive":
-            return run_noninteractive_argv(argv, io)
-
-        cidfile = new_interactive_cidfile(self._state_dir)
-        argv = add_cidfile(argv, cidfile)
-        return run_interactive_argv(argv, io, cidfile=cidfile)
+        return run_podman_argv(
+            execution_plan_argv(plan),
+            io,
+            state_dir=self._state_dir,
+            interactive=plan.interaction_mode == "interactive",
+        )

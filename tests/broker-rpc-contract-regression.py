@@ -261,16 +261,15 @@ def check_auth_contract() -> None:
     originals = {
         "seed_provider_home": agentd.seed_provider_home,
         "common_runtime_args": agentd.common_runtime_args,
-        "new_interactive_cidfile": agentd.new_interactive_cidfile,
-        "stream_interactive": agentd.stream_interactive,
+        "execute_runtime_argv": agentd.execute_runtime_argv,
     }
     captured: list[list[str]] = []
     try:
         agentd.seed_provider_home = lambda _cfg, _provider: None
         agentd.common_runtime_args = lambda _cfg, _provider, **_kwargs: ["podman", "run", "--rm"]
-        agentd.new_interactive_cidfile = lambda _cfg: Path("/tmp/agentd-rpc-contract.cid")
-        agentd.stream_interactive = (
-            lambda _conn, _fileobj, argv, **_kwargs: captured.append(list(argv)) or 17
+        agentd.execute_runtime_argv = (
+            lambda _cfg, _conn, _fileobj, argv, **_kwargs:
+            captured.append(list(argv)) or 17
         )
 
         cfg = {"images": {"codex": "codex-image", "cursor": "cursor-image"}}

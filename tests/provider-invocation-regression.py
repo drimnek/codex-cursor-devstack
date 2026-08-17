@@ -123,9 +123,7 @@ def check_auth_invocations() -> None:
     originals = {
         "seed_provider_home": agentd.seed_provider_home,
         "common_runtime_args": agentd.common_runtime_args,
-        "new_interactive_cidfile": agentd.new_interactive_cidfile,
-        "add_cidfile": agentd.add_cidfile,
-        "stream_interactive": agentd.stream_interactive,
+        "execute_runtime_argv": agentd.execute_runtime_argv,
     }
     seeded: list[str] = []
     calls: list[tuple[list[str], dict]] = []
@@ -136,16 +134,11 @@ def check_auth_invocations() -> None:
             lambda _cfg, provider, **_kwargs:
             ["podman", "run", "--rm", f"--provider={provider}"]
         )
-        agentd.new_interactive_cidfile = (
-            lambda _cfg: Path("/tmp/provider-invocation.cid")
-        )
-        agentd.add_cidfile = lambda argv, _cidfile: list(argv)
-
-        def fake_stream(_conn, _fileobj, argv, **kwargs):
+        def fake_execute(_cfg, _conn, _fileobj, argv, **kwargs):
             calls.append((list(argv), dict(kwargs)))
             return 0
 
-        agentd.stream_interactive = fake_stream
+        agentd.execute_runtime_argv = fake_execute
         cfg = {
             "images": {
                 "codex": "codex-image",
@@ -165,6 +158,7 @@ def check_auth_invocations() -> None:
             "podman", "run", "--rm", "--provider=codex",
             "codex-image", "codex", "login", "--device-auth",
         ]
+        assert codex_kwargs["interactive"] is True
         assert codex_kwargs["timeout_seconds"] == agentd.AUTH_TIMEOUT_SECONDS
 
         cursor_conn = FakeConn()
@@ -180,6 +174,7 @@ def check_auth_invocations() -> None:
             "-e", "NO_OPEN_BROWSER=1",
             "cursor-image", "agent", "login",
         ]
+        assert cursor_kwargs["interactive"] is True
         assert cursor_kwargs["timeout_seconds"] == agentd.AUTH_TIMEOUT_SECONDS
         assert seeded == ["codex", "cursor"]
     finally:

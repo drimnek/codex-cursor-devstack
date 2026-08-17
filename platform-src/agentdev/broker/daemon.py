@@ -90,6 +90,7 @@ from agentdev.runtime.podman import (
     new_interactive_cidfile as podman_new_interactive_cidfile,
     run_interactive_argv,
     run_noninteractive_argv,
+    run_podman_argv,
     terminate_process_group,
 )
 
@@ -516,6 +517,28 @@ def stream_interactive(
     return result.exit_code
 
 
+def execute_runtime_argv(
+    cfg: dict,
+    conn: socket.socket,
+    fileobj,
+    argv: list[str],
+    *,
+    interactive: bool,
+    timeout_seconds: float | None = None,
+    timeout_output: bytes | None = None,
+) -> int:
+    """Execute raw Podman argv without exposing process-control mechanics."""
+    runtime_io = RpcRuntimeIO(conn, fileobj if interactive else None)
+    return run_podman_argv(
+        argv,
+        runtime_io,
+        state_dir=Path(cfg["state_dir"]),
+        interactive=interactive,
+        timeout_seconds=timeout_seconds,
+        timeout_output=timeout_output,
+    ).exit_code
+
+
 def execute_runtime_plan(
     cfg: dict,
     conn: socket.socket,
@@ -758,13 +781,16 @@ def op_auth(cfg: dict, conn: socket.socket, fileobj, provider: str) -> int:
     spec = driver.auth_spec()
     env_args = provider_environment_args(spec.environment)
     agent_args = list(spec.argv)
-    timeout_seconds = spec.timeout_seconds
     argv = [*runtime, *env_args, cfg["images"][provider], *agent_args]
-    cidfile = new_interactive_cidfile(cfg)
-    argv = add_cidfile(argv, cidfile)
-    send(conn, {"type": "start", "interactive": True})
-    rc = stream_interactive(
-        conn, fileobj, argv, timeout_seconds=timeout_seconds, cidfile=cidfile
+    send(conn, {"type": "start", "interactive": spec.interactive})
+    rc = execute_runtime_argv(
+        cfg,
+        conn,
+        fileobj,
+        argv,
+        interactive=spec.interactive,
+        timeout_seconds=spec.timeout_seconds,
+        timeout_output=b"\r\nAuthentication timed out.\r\n",
     )
     try:
         send(conn, {"type": "exit", "code": rc})
