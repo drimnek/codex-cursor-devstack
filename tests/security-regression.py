@@ -12,6 +12,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+AGENTD_ENTRYPOINT = ROOT / "platform-src/bin/agentd"
+AGENTCTL_IMPLEMENTATION = ROOT / "platform-src/agentdev/broker/cli.py"
 
 
 def load_extensionless(name: str, path: Path):
@@ -23,7 +25,7 @@ def load_extensionless(name: str, path: Path):
     return module
 
 
-agentd = load_extensionless("agentd_test", ROOT / "platform-src/bin/agentd")
+agentd = load_extensionless("agentd_test", AGENTD_ENTRYPOINT)
 
 
 def run(*argv: str, cwd: Path | None = None) -> str:
@@ -42,7 +44,7 @@ def commit(repo: Path, name: str, content: str) -> str:
 
 
 def test_human_controller_does_not_open_agent_git() -> None:
-    source = (ROOT / "platform-src/bin/agentctl").read_text()
+    source = AGENTCTL_IMPLEMENTATION.read_text()
     tree = ast.parse(source)
     violations = []
     for fn in [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:

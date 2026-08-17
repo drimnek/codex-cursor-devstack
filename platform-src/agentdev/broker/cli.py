@@ -1,0 +1,635 @@
+#!/usr/bin/python3
+"""Human-side controller for the dual-agent development platform.
+
+Normal Git/project operations run as the invoking human user. Runtime operations
+are sent to the constrained agentd broker over a Unix socket; no sudo is used
+in the normal workflow.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import datetime as dt
+import grp
+import json
+import os
+import re
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import termios
+import threading
+import tty
+from pathlib import Path
+
+CONFIG_PATH = Path("/srv/agent-dev/platform/config/platform.json")
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+BRANCH_PREFIX = "agent/"
+INTEGRATION_BRANCH = "agent/integration"
+
+
+def die(msg: str, code: int = 2) -> None:
+    print(f"agentctl: {msg}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def load_config() -> dict:
+    try:
+        return json.loads(CONFIG_PATH.read_text())
+    except Exception as exc:
+        die(f"cannot read {CONFIG_PATH}: {exc}")
+
+
+def check_name(value: str, what: str) -> str:
+    if not NAME_RE.fullmatch(value):
+        die(f"invalid {what} name {value!r}; use letters, numbers, dot, underscore or dash")
+    return value
+
+
+def run(cmd, *, check=True, cwd=None, capture=False):
+    print("+", " ".join(map(str, cmd)), file=sys.stderr)
+    return subprocess.run(list(map(str, cmd)), check=check, cwd=cwd, text=True, capture_output=capture)
+
+
+def require_operator(cfg: dict) -> None:
+    if os.geteuid() == 0:
+        die("do not run normal agentctl commands as root; use your operator account")
+    try:
+        ops_gid = grp.getgrnam(cfg["ops_group"]).gr_gid
+    except KeyError:
+        die(f"operator group {cfg['ops_group']!r} does not exist; rerun bootstrap")
+    if ops_gid not in os.getgroups():
+        die(f"current user is not a member of {cfg['ops_group']}; log out/in after bootstrap")
+
+
+def project_paths(cfg: dict, project: str) -> dict[str, Path]:
+    project = check_name(project, "project")
+    root = Path(cfg["root"]) / "projects" / project
+    return {
+        "root": root,
+        "repo_root": root / "repo",
+        "main": root / "repo" / "main",
+        "agent": root / "repo" / "agent",
+        "worktrees": root / "worktrees",
+        "tasks": root / "tasks",
+        "reference": root / "reference",
+        "results": root / "results",
+        "runtime": root / "runtime",
+        "exchange": root / "exchange",
+        "inbound": root / "exchange" / "inbound",
+        "outbound": root / "exchange" / "outbound",
+        "project_meta": root / "project.json",
+    }
+
+
+def task_meta_path(pp: dict[str, Path], task: str) -> Path:
+    return pp["tasks"] / f"{check_name(task, 'task')}.json"
+
+
+def now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+
+
+def git(repo: Path, *args: str, capture=False, check=True):
+    return run(["git", "-C", repo, *args], capture=capture, check=check)
+
+
+def git_text(repo: Path, *args: str) -> str:
+    return git(repo, *args, capture=True).stdout.strip()
+
+
+def ensure_clean(repo: Path, label: str) -> None:
+    out = git_text(repo, "status", "--porcelain")
+    if out:
+        die(f"{label} has uncommitted or untracked changes")
+
+
+def ensure_git_repo(repo: Path, label: str) -> None:
+    if not repo.is_dir() or not (repo / ".git").exists():
+        die(f"{label} is not a Git checkout: {repo}")
+
+
+def set_project_traverse_for_agent(cfg: dict, pp: dict[str, Path]) -> None:
+    agent = cfg["agent_user"]
+    run(["setfacl", "-m", f"u:{agent}:x", pp["root"]])
+    # agentd needs to reach inbound/outbound without being able to list the
+    # exchange namespace itself. Child directories receive their own ACLs.
+    run(["setfacl", "-m", f"u:{agent}:x", pp["exchange"]])
+
+
+def grant_agent_ro(cfg: dict, path: Path) -> None:
+    agent = cfg["agent_user"]
+    if not path.exists():
+        return
+    run(["find", path, "-type", "d", "-exec", "setfacl", "-m", f"u:{agent}:rx", "{}", "+"])
+    run(["find", path, "-type", "f", "-exec", "setfacl", "-m", f"u:{agent}:r", "{}", "+"])
+
+
+def write_json(path: Path, data: dict, cfg: dict, *, agent_read=False) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    os.chmod(tmp, 0o640)
+    os.replace(tmp, path)
+    if agent_read:
+        run(["setfacl", "-m", f"u:{cfg['agent_user']}:r", path])
+
+
+def read_json(path: Path, what: str) -> dict:
+    try:
+        return json.loads(path.read_text())
+    except Exception as exc:
+        die(f"cannot read {what} {path}: {exc}")
+
+
+def task_records(pp: dict[str, Path]) -> list[dict]:
+    records: list[dict] = []
+    if not pp["tasks"].exists():
+        return records
+    for path in sorted(pp["tasks"].glob("*.json")):
+        try:
+            rec = json.loads(path.read_text())
+            rec["_path"] = str(path)
+            records.append(rec)
+        except Exception:
+            continue
+    return records
+
+
+def active_sequential(records: list[dict]) -> list[dict]:
+    return [r for r in records if r.get("mode") == "integration" and r.get("status") == "active"]
+
+
+def pending_parallel(records: list[dict]) -> list[dict]:
+    return [r for r in records if r.get("mode") == "parallel" and r.get("status") in {"active", "completed"}]
+
+
+def rpc_connect(cfg: dict) -> socket.socket:
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.connect(cfg["socket"])
+    except OSError as exc:
+        die(f"cannot connect to agentd at {cfg['socket']}: {exc}; check 'systemctl status agentd.socket agentd.service'")
+    return sock
+
+
+def send_frame(sock: socket.socket, obj: dict) -> None:
+    sock.sendall(json.dumps(obj, separators=(",", ":")).encode() + b"\n")
+
+
+def recv_line(fileobj) -> dict:
+    line = fileobj.readline()
+    if not line:
+        raise EOFError
+    return json.loads(line)
+
+
+def rpc(cfg: dict, request: dict, *, interactive=False) -> int:
+    sock = rpc_connect(cfg)
+    fileobj = sock.makefile("rb")
+    send_lock = threading.Lock()
+    cancel_sent = threading.Event()
+
+    def send_control(obj: dict) -> None:
+        with send_lock:
+            send_frame(sock, obj)
+
+    send_control(request)
+
+    old_term = None
+    old_sigint = None
+    old_sigwinch = None
+    stdin_fd = None
+    stop = False
+
+    def request_cancel(*_unused) -> None:
+        if cancel_sent.is_set():
+            return
+        cancel_sent.set()
+        try:
+            send_control({"type": "cancel"})
+        except OSError:
+            pass
+
+    def send_resize(*_unused):
+        if not interactive or not sys.stdin.isatty():
+            return
+        try:
+            size = os.get_terminal_size(sys.stdin.fileno())
+            send_control({"type": "resize", "rows": size.lines, "cols": size.columns})
+        except OSError:
+            pass
+
+    try:
+        first = recv_line(fileobj)
+        if first.get("type") == "error":
+            die(first.get("message", "agentd error"), int(first.get("code", 2)))
+        if first.get("type") == "result":
+            result = first.get("result")
+            if isinstance(result, (dict, list)):
+                print(json.dumps(result, indent=2, sort_keys=True))
+            elif result is not None:
+                print(result)
+            return int(first.get("code", 0))
+        if first.get("type") != "start":
+            die(f"unexpected response from agentd: {first}")
+
+        interactive = bool(first.get("interactive", interactive))
+        if interactive:
+            old_sigint = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, request_cancel)
+
+        if interactive and sys.stdin.isatty():
+            stdin_fd = sys.stdin.fileno()
+            old_term = termios.tcgetattr(stdin_fd)
+            old_sigwinch = signal.getsignal(signal.SIGWINCH)
+            tty.setraw(stdin_fd)
+            signal.signal(signal.SIGWINCH, send_resize)
+            send_resize()
+
+            def pump_input():
+                nonlocal stop
+                while not stop:
+                    try:
+                        data = os.read(stdin_fd, 4096)
+                    except OSError:
+                        return
+                    if not data:
+                        return
+                    before, sep, _after = data.partition(b"\x03")
+                    try:
+                        if sep:
+                            if before:
+                                send_control({"type": "input", "data": base64.b64encode(before).decode()})
+                            request_cancel()
+                            return
+                        send_control({"type": "input", "data": base64.b64encode(data).decode()})
+                    except OSError:
+                        return
+
+            threading.Thread(target=pump_input, daemon=True).start()
+
+        while True:
+            try:
+                msg = recv_line(fileobj)
+            except EOFError:
+                if cancel_sent.is_set():
+                    return 130
+                die("agentd connection closed unexpectedly")
+            mtype = msg.get("type")
+            if mtype == "output":
+                data = base64.b64decode(msg.get("data", ""))
+                os.write(sys.stdout.fileno(), data)
+            elif mtype == "exit":
+                return int(msg.get("code", 1))
+            elif mtype == "error":
+                print(f"agentd: {msg.get('message', 'error')}", file=sys.stderr)
+                return int(msg.get("code", 1))
+    finally:
+        stop = True
+        if old_sigwinch is not None:
+            signal.signal(signal.SIGWINCH, old_sigwinch)
+        if old_sigint is not None:
+            signal.signal(signal.SIGINT, old_sigint)
+        if old_term is not None and stdin_fd is not None:
+            termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_term)
+        sock.close()
+
+
+def cmd_ping(cfg: dict, _args) -> None:
+    raise SystemExit(rpc(cfg, {"op": "ping"}))
+
+
+def cmd_build(cfg: dict, _args) -> None:
+    raise SystemExit(rpc(cfg, {"op": "build"}))
+
+
+def cmd_auth(cfg: dict, args) -> None:
+    raise SystemExit(rpc(cfg, {"op": "auth", "provider": args.provider}, interactive=True))
+
+
+def cmd_status(cfg: dict, _args) -> None:
+    raise SystemExit(rpc(cfg, {"op": "status"}))
+
+
+def cmd_versions(cfg: dict, _args) -> None:
+    raise SystemExit(rpc(cfg, {"op": "versions"}))
+
+
+def cmd_smoke(cfg: dict, _args) -> None:
+    raise SystemExit(rpc(cfg, {"op": "smoke"}))
+
+
+def cmd_project_create(cfg: dict, args) -> None:
+    project = check_name(args.project, "project")
+    pp = project_paths(cfg, project)
+    if pp["root"].exists():
+        die(f"project already exists: {pp['root']}")
+    ops = cfg["ops_group"]
+    shared_dirs = [
+        pp["root"], pp["repo_root"], pp["worktrees"], pp["tasks"],
+        pp["reference"], pp["results"], pp["runtime"], pp["exchange"],
+        pp["inbound"], pp["outbound"],
+    ]
+    for path in shared_dirs:
+        path.mkdir(parents=True, exist_ok=True)
+        run(["chgrp", ops, path])
+        os.chmod(path, 0o2770)
+
+    # repo/ is a sticky handoff namespace: operators create repo/main while
+    # agentd can create repo/agent as agentdev without either identity being
+    # able to rename or remove the other identity's checkout. agentdev gets
+    # write+traverse, but not directory listing, on the parent.
+    agent = cfg["agent_user"]
+    os.chmod(pp["repo_root"], 0o3770)
+    run(["setfacl", "-m", f"u:{agent}:-wx", pp["repo_root"]])
+
+    # agentd needs traversal but never receives access to repo/main.
+    set_project_traverse_for_agent(cfg, pp)
+    for path in [pp["worktrees"], pp["tasks"], pp["results"], pp["runtime"], pp["inbound"], pp["outbound"]]:
+        run(["setfacl", "-m", f"u:{agent}:rwx,d:u:{agent}:rwx", path])
+    # Human operators need to read bundles created by agentd even though agentd
+    # is deliberately not a member of agentdev-ops.
+    run(["setfacl", "-m", f"d:g:{ops}:rx,d:m::rwx", pp["outbound"]])
+    print(pp["root"])
+
+
+def cmd_project_import(cfg: dict, args) -> None:
+    project = check_name(args.project, "project")
+    src = Path(args.source).expanduser().resolve()
+    if not src.is_dir():
+        die(f"source directory does not exist: {src}")
+    pp = project_paths(cfg, project)
+    if not pp["root"].exists():
+        class X: pass
+        x = X(); x.project = project
+        cmd_project_create(cfg, x)
+    if pp["main"].exists() and any(pp["main"].iterdir()):
+        die(f"repo/main is not empty: {pp['main']}")
+    pp["main"].mkdir(parents=True, exist_ok=True)
+    run(["rsync", "-a", "--delete", f"{src}/", f"{pp['main']}/"])
+    os.chmod(pp["main"], 0o700)
+    print(f"Imported human-controlled checkout: {pp['main']}")
+    if (pp["main"] / ".git").exists():
+        class X: pass
+        x = X(); x.project = project
+        cmd_project_init(cfg, x)
+
+
+def cmd_project_init(cfg: dict, args) -> None:
+    """Initialize repo/agent through agentd so it is agent-owned from birth."""
+    project = check_name(args.project, "project")
+    pp = project_paths(cfg, project)
+    ensure_git_repo(pp["main"], "repo/main")
+    ensure_clean(pp["main"], "repo/main")
+    if pp["agent"].exists():
+        die(f"agent repository already exists: {pp['agent']}")
+    main_branch = git_text(pp["main"], "branch", "--show-current")
+    if not main_branch:
+        die("repo/main is in detached HEAD state; check out the intended main branch first")
+    main_commit = git_text(pp["main"], "rev-parse", "HEAD")
+
+    meta = {
+        "project": project,
+        "main_branch": main_branch,
+        "integration_branch": INTEGRATION_BRANCH,
+        "created_at": now_iso(),
+        "created_from": main_commit,
+    }
+    write_json(pp["project_meta"], meta, cfg, agent_read=True)
+
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    name = f"project-init-{stamp}-{os.getpid()}.bundle"
+    tmp = pp["inbound"] / f".{name}.tmp"
+    final = pp["inbound"] / name
+    run(["git", "-C", pp["main"], "bundle", "create", tmp, main_branch])
+    os.replace(tmp, final)
+    os.chmod(final, 0o640)
+    run(["setfacl", "-m", f"u:{cfg['agent_user']}:r", final])
+
+    rc = rpc(cfg, {"op": "project-init", "project": project, "bundle": name})
+    if rc != 0:
+        die(f"agent-side repository initialization failed; inbound bundle retained at {final}", rc)
+    print(f"Initialized persistent agent repository: {pp['agent']}")
+    print(f"Integration branch: {INTEGRATION_BRANCH}")
+    print("repo/agent is agent-owned; human-side agentctl never executes Git inside it.")
+
+
+def cmd_reference_sync(cfg: dict, args) -> None:
+    project = check_name(args.project, "project")
+    src = Path(args.source).expanduser().resolve()
+    if not src.is_dir():
+        die(f"reference source does not exist: {src}")
+    pp = project_paths(cfg, project)
+    if not pp["root"].exists():
+        die(f"project does not exist: {project}")
+    run(["rsync", "-a", "--delete", f"{src}/", f"{pp['reference']}/"])
+    grant_agent_ro(cfg, pp["reference"])
+    print(pp["reference"])
+
+
+def cmd_project_sync(cfg: dict, args) -> None:
+    """Transfer human main history to agentd as data, never by opening repo/agent."""
+    project = check_name(args.project, "project")
+    pp = project_paths(cfg, project)
+    ensure_git_repo(pp["main"], "repo/main")
+    ensure_clean(pp["main"], "repo/main")
+    meta = read_json(pp["project_meta"], "project metadata")
+    main_branch = meta["main_branch"]
+    current_branch = git_text(pp["main"], "branch", "--show-current")
+    if current_branch != main_branch:
+        die(f"repo/main is on {current_branch!r}; expected {main_branch!r}")
+
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    name = f"human-main-{stamp}-{os.getpid()}.bundle"
+    tmp = pp["inbound"] / f".{name}.tmp"
+    final = pp["inbound"] / name
+    run(["git", "-C", pp["main"], "bundle", "create", tmp, main_branch])
+    os.replace(tmp, final)
+    os.chmod(final, 0o640)
+    run(["setfacl", "-m", f"u:{cfg['agent_user']}:r", final])
+    rc = rpc(cfg, {"op": "project-sync", "project": project, "bundle": name})
+    if rc != 0:
+        die(f"agent-side synchronization failed; inbound bundle retained at {final}", rc)
+
+
+def cmd_project_export(cfg: dict, args) -> None:
+    project = check_name(args.project, "project")
+    raise SystemExit(rpc(cfg, {"op": "project-export", "project": project}))
+
+
+def _real_dir(path: Path) -> bool:
+    try:
+        return not path.is_symlink() and path.is_dir()
+    except OSError:
+        return False
+
+
+def _real_file(path: Path) -> bool:
+    try:
+        return not path.is_symlink() and path.is_file()
+    except OSError:
+        return False
+
+
+def discover_projects(cfg: dict) -> list[dict]:
+    """List structurally available projects without entering agent-owned Git state."""
+    projects = Path(cfg["root"]) / "projects"
+    if projects.is_symlink() or not projects.is_dir():
+        die(f"projects namespace is not a real directory: {projects}")
+    try:
+        entries = sorted(projects.iterdir(), key=lambda path: path.name)
+    except OSError as exc:
+        die(f"cannot list projects namespace {projects}: {exc}")
+
+    result: list[dict] = []
+    for entry in entries:
+        if not NAME_RE.fullmatch(entry.name) or not _real_dir(entry):
+            continue
+        repo_root = entry / "repo"
+        ready = (
+            _real_file(entry / "project.json")
+            and _real_dir(repo_root)
+            and _real_dir(repo_root / "agent")
+        )
+        result.append({
+            "project": entry.name,
+            "state": "ready" if ready else "incomplete",
+        })
+    return result
+
+
+def cmd_project_list(cfg: dict, args) -> None:
+    projects = discover_projects(cfg)
+    if args.oneline:
+        for project in projects:
+            print(f"{project['project']}:{project['state']}")
+        return
+    print(json.dumps(projects, indent=2, sort_keys=True))
+
+
+def task_rpc(cfg: dict, args, op: str) -> None:
+    req = {"op": op, "project": check_name(args.project, "project"), "task": check_name(args.task, "task")}
+    if op == "task-start":
+        req["parallel"] = bool(args.parallel)
+        req["dependencies"] = [check_name(dep, "dependency") for dep in (args.depends_on or [])]
+    raise SystemExit(rpc(cfg, req))
+
+
+def cmd_task_start(cfg: dict, args) -> None:
+    task_rpc(cfg, args, "task-start")
+
+
+def cmd_task_complete(cfg: dict, args) -> None:
+    task_rpc(cfg, args, "task-complete")
+
+
+def cmd_task_merge(cfg: dict, args) -> None:
+    task_rpc(cfg, args, "task-merge")
+
+
+def cmd_task_abort(cfg: dict, args) -> None:
+    task_rpc(cfg, args, "task-abort")
+
+
+def cmd_task_list(cfg: dict, args) -> None:
+    raise SystemExit(rpc(cfg, {"op": "task-list", "project": check_name(args.project, "project")}))
+
+
+def cmd_project_status(cfg: dict, args) -> None:
+    raise SystemExit(rpc(cfg, {"op": "project-status", "project": check_name(args.project, "project")}))
+
+def runtime_request(args, op: str) -> dict:
+    req = {"op": op, "provider": args.provider, "project": check_name(args.project, "project"), "task": check_name(args.task, "task")}
+    if hasattr(args, "readonly"):
+        req["readonly"] = bool(args.readonly)
+    if hasattr(args, "outer_only"):
+        req["outer_only"] = bool(args.outer_only)
+    if hasattr(args, "prompt") and args.prompt:
+        req["prompt"] = args.prompt
+    return req
+
+
+def cmd_run(cfg: dict, args) -> None:
+    raise SystemExit(rpc(cfg, runtime_request(args, "run"), interactive=True))
+
+
+def cmd_index(cfg: dict, args) -> None:
+    req = {"op": "index", "project": check_name(args.project, "project"), "task": check_name(args.task, "task")}
+    raise SystemExit(rpc(cfg, req))
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Manage the isolated dual-agent development platform")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("ping", help="check the agentd broker")
+    sub.add_parser("build", help="build executor images through agentd")
+    sub.add_parser("versions", help="print executor/tool versions")
+    sub.add_parser("status", help="check provider authentication status")
+    sub.add_parser("smoke", help="run outer-boundary isolation checks")
+
+    a = sub.add_parser("auth", help="authenticate one provider")
+    a.add_argument("provider", choices=["codex", "cursor"])
+
+    pc = sub.add_parser("project-create", help="create the localized project layout")
+    pc.add_argument("project")
+    pi = sub.add_parser("project-import", help="copy a human checkout into repo/main and initialize repo/agent")
+    pi.add_argument("project"); pi.add_argument("source")
+    pinit = sub.add_parser("project-init", help="create the persistent agent clone from an existing repo/main")
+    pinit.add_argument("project")
+    psync = sub.add_parser("project-sync", help="transfer committed human main to agent/integration through a Git bundle")
+    psync.add_argument("project")
+    pexp = sub.add_parser("project-export", help="export agent/integration as a reviewable Git bundle")
+    pexp.add_argument("project")
+    plist = sub.add_parser("project-list", help="list structurally available projects")
+    plist.add_argument("--oneline", action="store_true", help="print one project per line as name:state")
+    pref = sub.add_parser("reference-sync", help="copy project reference material and expose it read-only to agents")
+    pref.add_argument("project"); pref.add_argument("source")
+    pst = sub.add_parser("project-status", help="show integration checkout and task state")
+    pst.add_argument("project")
+
+    ts = sub.add_parser("task-start", help="start a sequential integration task or an explicit parallel worktree task")
+    ts.add_argument("project"); ts.add_argument("task")
+    ts.add_argument("--parallel", action="store_true", help="create agent/<task> + temporary worktree from current agent/integration")
+    ts.add_argument("--depends-on", action="append", default=[], help="record a requirement dependency (repeatable metadata only)")
+    tc = sub.add_parser("task-complete", help="mark an active task complete after its workspace is clean/committed")
+    tc.add_argument("project"); tc.add_argument("task")
+    tm = sub.add_parser("task-merge", help="merge a completed parallel task into agent/integration and remove its worktree")
+    tm.add_argument("project"); tm.add_argument("task")
+    ta = sub.add_parser("task-abort", help="discard a parallel task branch/worktree")
+    ta.add_argument("project"); ta.add_argument("task")
+    tl = sub.add_parser("task-list", help="list task metadata")
+    tl.add_argument("project")
+
+    ix = sub.add_parser("index", help="run optional GitNexus analysis in the selected task workspace")
+    ix.add_argument("project"); ix.add_argument("task")
+
+    r = sub.add_parser("run", help="run Codex/Cursor for one tracked requirement")
+    r.add_argument("provider", choices=["codex", "cursor"]); r.add_argument("project"); r.add_argument("task")
+    r.add_argument("--readonly", action="store_true", help="mount the selected workspace read-only (review mode)")
+    r.add_argument("--outer-only", action="store_true", help="Codex only: rely on the Podman boundary instead of nested Codex OS sandbox")
+    r.add_argument("prompt", nargs="?", help="optional quoted prompt")
+    return p
+
+
+def main() -> None:
+    cfg = load_config()
+    require_operator(cfg)
+    args = parser().parse_args()
+    commands = {
+        "ping": cmd_ping, "build": cmd_build, "auth": cmd_auth, "status": cmd_status,
+        "versions": cmd_versions, "smoke": cmd_smoke,
+        "project-create": cmd_project_create, "project-import": cmd_project_import,
+        "project-init": cmd_project_init, "project-sync": cmd_project_sync, "project-export": cmd_project_export,
+        "project-list": cmd_project_list, "reference-sync": cmd_reference_sync, "project-status": cmd_project_status,
+        "task-start": cmd_task_start, "task-complete": cmd_task_complete,
+        "task-merge": cmd_task_merge, "task-abort": cmd_task_abort, "task-list": cmd_task_list,
+        "run": cmd_run, "index": cmd_index,
+    }
+    commands[args.cmd](cfg, args)
+
+
+if __name__ == "__main__":
+    main()

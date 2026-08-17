@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-AGENTD = ROOT / "platform-src/bin/agentd"
+AGENTD = ROOT / "platform-src/agentdev/broker/daemon.py"
 AUDIT = ROOT / "tests/executor-boundary-source-audit.py"
 
 
