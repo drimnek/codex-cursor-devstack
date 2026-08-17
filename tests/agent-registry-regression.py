@@ -124,16 +124,17 @@ def test_builtin_registry_is_fixed_and_fail_closed() -> None:
     assert tuple(driver.id() for driver in registry.drivers()) == ("codex", "cursor")
     assert all(isinstance(driver, AgentDriver) for driver in registry.drivers())
 
-    # DRV-004 replaces the Codex transition bridge with a concrete driver.
     codex = registry.get("codex")
+    cursor = registry.get("cursor")
     assert codex.capabilities().compatibility_modes == frozenset({"outer-only"})
     assert codex.state_spec()[0].target == "/root/.codex"
     assert codex.auth_spec().argv == ("codex", "login", "--device-auth")
-    assert tuple(item.target for item in registry.get("cursor").state_spec()) == (
+    assert cursor.capabilities().compatibility_modes == frozenset()
+    assert tuple(item.target for item in cursor.state_spec()) == (
         "/root/.cursor",
         "/root/.config/cursor",
     )
-    expect(NotImplementedError, registry.get("cursor").auth_spec)
+    assert cursor.auth_spec().argv == ("agent", "login")
     expect(AgentRegistryError, registry.register, FakeDriver("third"))
 
 
@@ -150,7 +151,8 @@ def test_registry_is_not_dynamic_plugin_loading() -> None:
     for token in forbidden:
         assert token not in source, token
     assert "CodexDriver()" in source
-    assert '_LegacyBrokerDriver("cursor"' in source
+    assert "CursorDriver()" in source
+    assert "_LegacyBrokerDriver" not in source
 
 
 def test_broker_uses_registry_for_provider_acceptance() -> None:

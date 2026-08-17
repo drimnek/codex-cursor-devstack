@@ -52,6 +52,7 @@ def main() -> None:
     agent_registry = PACKAGE / "agents" / "registry.py"
     agent_state = PACKAGE / "agents" / "state.py"
     codex_driver = PACKAGE / "agents" / "codex.py"
+    cursor_driver = PACKAGE / "agents" / "cursor.py"
     assert daemon_impl.is_file()
     assert cli_impl.is_file()
     assert rpc_impl.is_file()
@@ -67,6 +68,7 @@ def main() -> None:
     assert agent_registry.is_file()
     assert agent_state.is_file()
     assert codex_driver.is_file()
+    assert cursor_driver.is_file()
 
     for entrypoint in (PLATFORM / "bin" / "agentd", PLATFORM / "bin" / "agentctl"):
         source = entrypoint.read_text(encoding="utf-8")
@@ -99,6 +101,7 @@ def main() -> None:
     try:
         from agentdev.agents.base import AgentCapabilities, AgentDriver, RunSpec
         from agentdev.agents.codex import CodexDriver
+        from agentdev.agents.cursor import CursorDriver
         from agentdev.agents.registry import AgentRegistry, BUILTIN_AGENT_REGISTRY
         from agentdev.agents.state import ProviderStateAdapter
         from agentdev.broker import cli, daemon, rpc
@@ -109,6 +112,7 @@ def main() -> None:
         assert isinstance(BUILTIN_AGENT_REGISTRY, AgentRegistry)
         assert BUILTIN_AGENT_REGISTRY.ids() == ("codex", "cursor")
         assert isinstance(BUILTIN_AGENT_REGISTRY.get("codex"), CodexDriver)
+        assert isinstance(BUILTIN_AGENT_REGISTRY.get("cursor"), CursorDriver)
         assert isinstance(BUILTIN_AGENT_REGISTRY.get("codex").state_adapter(), ProviderStateAdapter)
         assert hasattr(daemon, "main") and hasattr(daemon, "handle")
         assert hasattr(cli, "main") and hasattr(cli, "parser")

@@ -660,12 +660,7 @@ def capture(argv: list[str]) -> str:
 
 
 def provider_version_argv(provider: str) -> tuple[str, ...]:
-    driver = registered_provider(provider)
-    try:
-        return driver.version_probe().argv
-    except NotImplementedError:
-        # Cursor remains broker-owned until MA2-DRV-005.
-        return ("agent", "--version")
+    return registered_provider(provider).version_probe().argv
 
 
 def write_build_lock(cfg: dict) -> dict:
@@ -736,16 +731,10 @@ def op_auth(cfg: dict, conn: socket.socket, fileobj, provider: str) -> int:
     driver = registered_provider(provider, request_error=True)
     seed_provider_home(cfg, provider)
     runtime = common_runtime_args(cfg, provider)
-    try:
-        spec = driver.auth_spec()
-        env_args = provider_environment_args(spec.environment)
-        agent_args = list(spec.argv)
-        timeout_seconds = spec.timeout_seconds
-    except NotImplementedError:
-        # Cursor remains broker-owned until MA2-DRV-005.
-        env_args = ["-e", "NO_OPEN_BROWSER=1"]
-        agent_args = ["agent", "login"]
-        timeout_seconds = AUTH_TIMEOUT_SECONDS
+    spec = driver.auth_spec()
+    env_args = provider_environment_args(spec.environment)
+    agent_args = list(spec.argv)
+    timeout_seconds = spec.timeout_seconds
     argv = [*runtime, *env_args, cfg["images"][provider], *agent_args]
     cidfile = new_interactive_cidfile(cfg)
     argv = add_cidfile(argv, cidfile)
@@ -766,14 +755,9 @@ def op_status(cfg: dict, conn: socket.socket) -> int:
         driver = registered_provider(provider)
         seed_provider_home(cfg, provider)
         runtime = common_runtime_args(cfg, provider)
-        try:
-            spec = driver.auth_status_spec()
-            env_args = provider_environment_args(spec.environment)
-            agent_args = list(spec.argv)
-        except NotImplementedError:
-            # Cursor remains broker-owned until MA2-DRV-005.
-            env_args = []
-            agent_args = ["agent", "status"]
+        spec = driver.auth_status_spec()
+        env_args = provider_environment_args(spec.environment)
+        agent_args = list(spec.argv)
         argv = [*runtime, *env_args, cfg["images"][provider], *agent_args]
         send_output(conn, f"\n== {provider} ==\n".encode())
         stream_noninteractive(conn, argv)
@@ -917,19 +901,12 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
         workspace=ws,
         record=rec,
     )
-    try:
-        policy = driver.compile_policy({"readonly": readonly, "outer_only": outer_only})
-        run_spec = driver.create_run_spec(context, policy, prompt)
-        env_args = provider_environment_args(run_spec.environment)
-        agent_args = list(run_spec.argv)
-    except NotImplementedError:
-        # Cursor remains broker-owned until MA2-DRV-005.
-        if outer_only:
-            raise RequestError("outer-only mode is Codex-only")
-        env_args = []
-        agent_args = ["agent", "--trust"]
-        if prompt.strip():
-            agent_args.append(prompt)
+    if outer_only and "outer-only" not in driver.capabilities().compatibility_modes:
+        raise RequestError("outer-only mode is Codex-only")
+    policy = driver.compile_policy({"readonly": readonly, "outer_only": outer_only})
+    run_spec = driver.create_run_spec(context, policy, prompt)
+    env_args = provider_environment_args(run_spec.environment)
+    agent_args = list(run_spec.argv)
 
     argv = [*runtime, *env_args, image, *agent_args]
     lock_name = run_lock_name(task, rec)

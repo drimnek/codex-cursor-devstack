@@ -18,13 +18,7 @@ from agentdev.agents.base import (
     VersionProbeSpec,
 )
 from agentdev.agents.codex import CodexDriver
-from agentdev.agents.state import (
-    JsonFieldReconciliation,
-    ProviderStateAdapter,
-    StatePolicyMount,
-    StateVolumeLayout,
-)
-from agentdev.core.models import ProviderStateSpec, TaskContext
+from agentdev.agents.cursor import CursorDriver
 from agentdev.core.validation import is_valid_name
 
 
@@ -85,97 +79,6 @@ class AgentRegistry:
         return is_valid_name(driver_id) and driver_id in self._drivers
 
 
-class _LegacyBrokerDriver(AgentDriver):
-    """Transitional bridge for providers whose concrete driver has not landed.
-
-    The registry owns provider identity/state metadata, but command/auth/policy
-    semantics fail closed until the provider-specific driver is extracted.
-    """
-
-    def __init__(
-        self,
-        driver_id: str,
-        name: str,
-        state_adapter: ProviderStateAdapter,
-    ) -> None:
-        self._driver_id = driver_id
-        self._name = name
-        self._state_adapter = state_adapter
-
-    def id(self) -> str:
-        return self._driver_id
-
-    def display_name(self) -> str:
-        return self._name
-
-    @staticmethod
-    def _not_migrated():
-        raise NotImplementedError("provider semantics have not moved behind the driver contract yet")
-
-    def capabilities(self) -> AgentCapabilities:
-        return self._not_migrated()
-
-    def state_spec(self) -> tuple[ProviderStateSpec, ...]:
-        return self._state_adapter.state_spec()
-
-    def state_adapter(self) -> ProviderStateAdapter:
-        return self._state_adapter
-
-    def installation_spec(self) -> InstallationSpec:
-        return self._not_migrated()
-
-    def version_probe(self) -> VersionProbeSpec:
-        return self._not_migrated()
-
-    def auth_spec(self) -> AuthSpec:
-        return self._not_migrated()
-
-    def auth_status_spec(self) -> RunSpec:
-        return self._not_migrated()
-
-    def compile_policy(self, policy: object) -> ProviderPolicyArtifacts:
-        return self._not_migrated()
-
-    def create_run_spec(
-        self,
-        context: TaskContext,
-        policy: ProviderPolicyArtifacts,
-        prompt: str,
-    ) -> RunSpec:
-        return self._not_migrated()
-
-
-
-def _cursor_state_adapter() -> ProviderStateAdapter:
-    return ProviderStateAdapter(
-        volumes=(
-            StateVolumeLayout(
-                key="state",
-                mount=ProviderStateSpec("agent-dev-cursor-state", "/root/.cursor"),
-                staging_target="/state",
-                marker=".agent-dev-state-layout-v2",
-                legacy_path=".cursor",
-                empty_error="provider state volume is non-empty but has no layout marker",
-                smoke_marker=".agent-dev-state-write-smoke",
-            ),
-            StateVolumeLayout(
-                key="auth",
-                mount=ProviderStateSpec("agent-dev-cursor-auth", "/root/.config/cursor"),
-                staging_target="/auth",
-                marker=".agent-dev-auth-layout-v1",
-                legacy_path=".config/cursor",
-                empty_error="Cursor auth state volume is non-empty but has no layout marker",
-                smoke_marker=".agent-dev-auth-write-smoke",
-            ),
-        ),
-        legacy_volume="agent-dev-cursor-home",
-        reconciliation=JsonFieldReconciliation(
-            volume_key="state",
-            seed_relative_path="cli-config.json",
-            state_relative_path="cli-config.json",
-            managed_field="permissions",
-        ),
-    )
 
 
 def build_builtin_registry() -> AgentRegistry:
@@ -183,7 +86,7 @@ def build_builtin_registry() -> AgentRegistry:
     return AgentRegistry(
         (
             CodexDriver(),
-            _LegacyBrokerDriver("cursor", "Cursor", _cursor_state_adapter()),
+            CursorDriver(),
         )
     ).freeze()
 
