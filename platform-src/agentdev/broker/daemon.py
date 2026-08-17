@@ -15,6 +15,7 @@ import logging
 import os
 import pty
 import select
+import shlex
 import shutil
 import signal
 import socket
@@ -23,7 +24,7 @@ import subprocess
 import termios
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from agentdev.agents.registry import BUILTIN_AGENT_REGISTRY, UnknownAgentError
 from agentdev.broker.rpc import (
@@ -160,119 +161,137 @@ def ensure_volume(name: str) -> None:
         subprocess.run(["podman", "volume", "create", name], check=True)
 
 
+def provider_state_adapter(provider: str):
+    return registered_provider(provider).state_adapter()
+
+
 def provider_volume(provider: str) -> str:
-    return f"agent-dev-{provider}-state"
+    """Compatibility accessor for the provider's primary scoped state volume."""
+    return provider_state_adapter(provider).primary().mount.source
 
 
 def cursor_auth_volume() -> str:
-    return "agent-dev-cursor-auth"
+    """Compatibility accessor retained for the frozen state-layout regression."""
+    return provider_state_adapter("cursor").volume("auth").mount.source
 
 
 def cursor_auth_target() -> str:
-    return "/root/.config/cursor"
+    """Compatibility accessor retained for the frozen state-layout regression."""
+    return provider_state_adapter("cursor").volume("auth").mount.target
 
 
 def legacy_provider_volume(provider: str) -> str:
-    return f"agent-dev-{provider}-home"
+    legacy = provider_state_adapter(provider).legacy_volume
+    if legacy is None:
+        raise ValueError("provider has no legacy state volume")
+    return legacy
 
 
 def provider_state_dir(provider: str) -> str:
-    registered_provider(provider)
-    return ".codex" if provider == "codex" else ".cursor"
+    """Compatibility accessor derived from driver-owned state metadata."""
+    return PurePosixPath(provider_state_adapter(provider).primary().mount.target).name
 
 
 def provider_state_target(provider: str) -> str:
-    return f"/root/{provider_state_dir(provider)}"
+    return provider_state_adapter(provider).primary().mount.target
 
 
 def provider_seed_dir(cfg: dict, provider: str) -> Path:
+    registered_provider(provider)
     root = Path(cfg["root"])
     seed_root = canonical_dir(root / "platform" / "seed", root / "platform", "provider seed root")
     return canonical_dir(seed_root / provider, seed_root, f"{provider} policy directory")
 
 
+def _migration_script(adapter) -> str:
+    parts = ["set -eu"]
+    for index, layout in enumerate(adapter.volumes):
+        marker_var = "marker" if index == 0 else f"{layout.key}_marker"
+        marker_path = f"{layout.staging_target}/{layout.marker}"
+        parts.append(f"{marker_var}={shlex.quote(marker_path)}")
+        body = [
+            f"if find {shlex.quote(layout.staging_target)} -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then "
+            f"echo {shlex.quote(layout.empty_error)} >&2; exit {2 + index}; fi"
+        ]
+        if layout.legacy_path is not None:
+            legacy_path = f"/legacy/{layout.legacy_path}"
+            body.append(
+                f"if [ -d {shlex.quote(legacy_path)} ]; then "
+                f"cp -a {shlex.quote(legacy_path)}/. {shlex.quote(layout.staging_target)}/; fi"
+            )
+        for relative in layout.cleanup_after_copy:
+            body.append(
+                f"rm -f {shlex.quote(layout.staging_target + '/' + relative)}"
+            )
+        body.append(f': > "${marker_var}"')
+        parts.append(
+            f'if [ ! -e "${marker_var}" ]; then ' + "; ".join(body) + "; fi"
+        )
+    return "; ".join(parts)
+
+
 def prepare_provider_state(cfg: dict, provider: str) -> None:
-    """Create scoped provider state and migrate legacy whole-home state once."""
-    registered_provider(provider)
-    vol = provider_volume(provider)
-    ensure_volume(vol)
-    auth_vol = cursor_auth_volume() if provider == "cursor" else None
-    if auth_vol is not None:
-        ensure_volume(auth_vol)
-    legacy = legacy_provider_volume(provider)
-    legacy_exists = subprocess.run(
+    """Create driver-declared scoped state and migrate legacy state once."""
+    adapter = provider_state_adapter(provider)
+    for layout in adapter.volumes:
+        ensure_volume(layout.mount.source)
+
+    legacy = adapter.legacy_volume
+    legacy_exists = bool(legacy) and subprocess.run(
         ["podman", "volume", "exists", legacy],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     ).returncode == 0
-    state_dir = provider_state_dir(provider)
+
     image = cfg["images"]["base"]
     argv = [
         "podman", "run", "--rm", "--network=none", "--http-proxy=false",
         "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
-        "-v", f"{vol}:/state:rw",
     ]
-    if auth_vol is not None:
-        argv += ["-v", f"{auth_vol}:/auth:rw"]
+    for layout in adapter.volumes:
+        argv += ["-v", f"{layout.mount.source}:{layout.staging_target}:rw"]
     if legacy_exists:
         argv += ["-v", f"{legacy}:/legacy:ro"]
-    script = (
-        "set -eu; "
-        "marker=/state/.agent-dev-state-layout-v2; "
-        "if [ ! -e \"$marker\" ]; then "
-        "if find /state -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then "
-        "echo 'provider state volume is non-empty but has no layout marker' >&2; exit 2; "
-        "fi; "
-        f"if [ -d /legacy/{state_dir} ]; then cp -a /legacy/{state_dir}/. /state/; fi; "
-        + ("rm -f /state/config.toml; " if provider == "codex" else "")
-        + ": > \"$marker\"; "
-        "fi"
-    )
-    if provider == "cursor":
-        script += (
-            "; auth_marker=/auth/.agent-dev-auth-layout-v1; "
-            "if [ ! -e \"$auth_marker\" ]; then "
-            "if find /auth -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then "
-            "echo 'Cursor auth state volume is non-empty but has no layout marker' >&2; exit 3; "
-            "fi; "
-            "if [ -d /legacy/.config/cursor ]; then cp -a /legacy/.config/cursor/. /auth/; fi; "
-            ": > \"$auth_marker\"; "
-            "fi"
-        )
-    argv += [image, "bash", "-lc", script]
+    argv += [image, "bash", "-lc", _migration_script(adapter)]
     subprocess.run(argv, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def seed_provider_home(cfg: dict, provider: str) -> None:
-    """Prepare scoped provider state and reconcile platform-managed initial state."""
+    """Prepare driver-declared state and reconcile platform-managed fields."""
     prepare_provider_state(cfg, provider)
-    if provider != "cursor":
+    adapter = provider_state_adapter(provider)
+    plan = adapter.reconciliation
+    if plan is None:
         return
-    vol = provider_volume(provider)
+
+    layout = adapter.volume(plan.volume_key)
     image = cfg["images"]["base"]
     seed = provider_seed_dir(cfg, provider)
-    config = canonical_file(seed / "cli-config.json", seed, "Cursor policy")
+    config = canonical_file(seed / plan.seed_relative_path, seed, f"{provider} policy")
+    seed_target = f"/seed/{plan.seed_relative_path}"
+    state_target = f"/state/{plan.state_relative_path}"
+    field = plan.managed_field
     argv = [
         "podman", "run", "--rm", "--network=none", "--http-proxy=false",
         "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
-        "-v", f"{vol}:/state:rw",
-        "-v", f"{config}:/seed/cli-config.json:ro",
+        "-v", f"{layout.mount.source}:/state:rw",
+        "-v", f"{config}:{seed_target}:ro",
     ]
     script = (
         "set -eu; "
-        "state=/state/cli-config.json; "
-        "seed=/seed/cli-config.json; "
-        "if [ ! -e \"$state\" ]; then "
-        "install -m 0600 \"$seed\" \"$state\"; "
+        f"state={shlex.quote(state_target)}; "
+        f"seed={shlex.quote(seed_target)}; "
+        'if [ ! -e "$state" ]; then '
+        'install -m 0600 "$seed" "$state"; '
         "else "
-        "jq -e '(.permissions | type) == \"object\"' \"$seed\" >/dev/null; "
-        "tmp=$(mktemp /state/cli-config.json.tmp.XXXXXX); "
+        f"jq -e '(.{field} | type) == \"object\"' \"$seed\" >/dev/null; "
+        f"tmp=$(mktemp /state/{PurePosixPath(plan.state_relative_path).name}.tmp.XXXXXX); "
         "trap 'rm -f \"$tmp\"' EXIT; "
-        "jq --slurpfile seed \"$seed\" '.permissions = $seed[0].permissions' \"$state\" > \"$tmp\"; "
-        "chmod 0600 \"$tmp\"; "
-        "mv -f \"$tmp\" \"$state\"; "
+        f"jq --slurpfile seed \"$seed\" '.{field} = $seed[0].{field}' \"$state\" > \"$tmp\"; "
+        'chmod 0600 "$tmp"; '
+        'mv -f "$tmp" "$state"; '
         "trap - EXIT; "
         "fi"
     )
@@ -281,14 +300,22 @@ def seed_provider_home(cfg: dict, provider: str) -> None:
 
 
 def provider_policy_mounts(cfg: dict, provider: str) -> list[str]:
-    # Codex policy is immutable at runtime. Cursor's CLI rewrites cli-config.json
-    # atomically, so its active config stays writable while seed_provider_home()
-    # reconciles platform-managed permissions before provider execution.
-    if provider == "cursor":
+    adapter = provider_state_adapter(provider)
+    if not adapter.policy_mounts:
         return []
     seed = provider_seed_dir(cfg, provider)
-    config = canonical_file(seed / "config.toml", seed, "Codex policy")
-    return ["-v", f"{config}:/root/.codex/config.toml:ro"]
+    mounts: list[str] = []
+    for policy in adapter.policy_mounts:
+        source = canonical_file(
+            seed / policy.seed_relative_path,
+            seed,
+            f"{provider} policy",
+        )
+        mounts += [
+            "-v",
+            f"{source}:{policy.target}:{'ro' if policy.read_only else 'rw'}",
+        ]
+    return mounts
 
 def common_runtime_args(cfg: dict, provider: str | None, workspace: Path | None = None, *, readonly=False, reference: Path | None = None, task_meta: Path | None = None, git_common: Path | None = None, network_enabled: bool = True) -> list[str]:
     platform_root = Path(cfg["root"])
@@ -299,10 +326,12 @@ def common_runtime_args(cfg: dict, provider: str | None, workspace: Path | None 
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m", "--tmpfs", "/run:rw,nosuid,nodev,size=64m",
     ]
     if provider is not None:
-        registered_provider(provider)
-        args += ["-v", f"{provider_volume(provider)}:{provider_state_target(provider)}:rw"]
-        if provider == "cursor":
-            args += ["-v", f"{cursor_auth_volume()}:{cursor_auth_target()}:rw"]
+        driver = registered_provider(provider)
+        for state in driver.state_spec():
+            args += [
+                "-v",
+                f"{state.source}:{state.target}:{'ro' if state.read_only else 'rw'}",
+            ]
         args += provider_policy_mounts(cfg, provider)
     if workspace is not None:
         workspace = canonical_dir(workspace, platform_root / "projects", "workspace mount")
@@ -744,11 +773,7 @@ def op_smoke(cfg: dict, conn: socket.socket) -> int:
     for provider in AGENT_REGISTRY.ids():
         seed_provider_home(cfg, provider)
         runtime = common_runtime_args(cfg, provider, network_enabled=False)
-        writable_targets = [
-            (provider_state_target(provider), ".agent-dev-state-write-smoke"),
-        ]
-        if provider == "cursor":
-            writable_targets.append((cursor_auth_target(), ".agent-dev-auth-write-smoke"))
+        writable_targets = provider_state_adapter(provider).writable_smoke_targets()
         scoped_writes = "".join(
             f"touch {target}/{marker}; rm -f {target}/{marker}; "
             for target, marker in writable_targets

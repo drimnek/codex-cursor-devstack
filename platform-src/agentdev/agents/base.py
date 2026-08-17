@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
+from agentdev.agents.state import ProviderStateAdapter
 from agentdev.core.models import ProviderStateSpec, TaskContext
 
 
@@ -255,6 +256,10 @@ class AgentDriver(ABC):
     @abstractmethod
     def state_spec(self) -> tuple[ProviderStateSpec, ...]:
         """Return persistent provider-state mounts required by this driver."""
+
+    def state_adapter(self) -> ProviderStateAdapter:
+        """Return provider-state metadata; simple drivers get a static adapter."""
+        return ProviderStateAdapter.static(self.state_spec())
 
     @abstractmethod
     def installation_spec(self) -> InstallationSpec:

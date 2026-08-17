@@ -124,10 +124,15 @@ def test_builtin_registry_is_fixed_and_fail_closed() -> None:
     assert tuple(driver.id() for driver in registry.drivers()) == ("codex", "cursor")
     assert all(isinstance(driver, AgentDriver) for driver in registry.drivers())
 
-    # DRV-002 migrates provider identity only.  Semantic calls must not return
-    # invented compatibility data before the real provider drivers are extracted.
+    # DRV-003 adds provider-state semantics to the trusted registrations while
+    # unrelated provider behavior remains fail-closed until concrete drivers land.
     expect(NotImplementedError, registry.get("codex").capabilities)
-    expect(NotImplementedError, registry.get("cursor").state_spec)
+    assert registry.get("codex").state_spec()[0].target == "/root/.codex"
+    assert tuple(item.target for item in registry.get("cursor").state_spec()) == (
+        "/root/.cursor",
+        "/root/.config/cursor",
+    )
+    expect(NotImplementedError, registry.get("cursor").auth_spec)
     expect(AgentRegistryError, registry.register, FakeDriver("third"))
 
 

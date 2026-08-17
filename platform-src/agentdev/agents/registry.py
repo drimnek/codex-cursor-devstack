@@ -17,6 +17,12 @@ from agentdev.agents.base import (
     RunSpec,
     VersionProbeSpec,
 )
+from agentdev.agents.state import (
+    JsonFieldReconciliation,
+    ProviderStateAdapter,
+    StatePolicyMount,
+    StateVolumeLayout,
+)
 from agentdev.core.models import ProviderStateSpec, TaskContext
 from agentdev.core.validation import is_valid_name
 
@@ -87,9 +93,15 @@ class _LegacyBrokerDriver(AgentDriver):
     this registration.
     """
 
-    def __init__(self, driver_id: str, name: str) -> None:
+    def __init__(
+        self,
+        driver_id: str,
+        name: str,
+        state_adapter: ProviderStateAdapter,
+    ) -> None:
         self._driver_id = driver_id
         self._name = name
+        self._state_adapter = state_adapter
 
     def id(self) -> str:
         return self._driver_id
@@ -105,7 +117,10 @@ class _LegacyBrokerDriver(AgentDriver):
         return self._not_migrated()
 
     def state_spec(self) -> tuple[ProviderStateSpec, ...]:
-        return self._not_migrated()
+        return self._state_adapter.state_spec()
+
+    def state_adapter(self) -> ProviderStateAdapter:
+        return self._state_adapter
 
     def installation_spec(self) -> InstallationSpec:
         return self._not_migrated()
@@ -131,12 +146,65 @@ class _LegacyBrokerDriver(AgentDriver):
         return self._not_migrated()
 
 
+def _codex_state_adapter() -> ProviderStateAdapter:
+    return ProviderStateAdapter(
+        volumes=(
+            StateVolumeLayout(
+                key="state",
+                mount=ProviderStateSpec("agent-dev-codex-state", "/root/.codex"),
+                staging_target="/state",
+                marker=".agent-dev-state-layout-v2",
+                legacy_path=".codex",
+                empty_error="provider state volume is non-empty but has no layout marker",
+                smoke_marker=".agent-dev-state-write-smoke",
+                cleanup_after_copy=("config.toml",),
+            ),
+        ),
+        legacy_volume="agent-dev-codex-home",
+        policy_mounts=(
+            StatePolicyMount("config.toml", "/root/.codex/config.toml", True),
+        ),
+    )
+
+
+def _cursor_state_adapter() -> ProviderStateAdapter:
+    return ProviderStateAdapter(
+        volumes=(
+            StateVolumeLayout(
+                key="state",
+                mount=ProviderStateSpec("agent-dev-cursor-state", "/root/.cursor"),
+                staging_target="/state",
+                marker=".agent-dev-state-layout-v2",
+                legacy_path=".cursor",
+                empty_error="provider state volume is non-empty but has no layout marker",
+                smoke_marker=".agent-dev-state-write-smoke",
+            ),
+            StateVolumeLayout(
+                key="auth",
+                mount=ProviderStateSpec("agent-dev-cursor-auth", "/root/.config/cursor"),
+                staging_target="/auth",
+                marker=".agent-dev-auth-layout-v1",
+                legacy_path=".config/cursor",
+                empty_error="Cursor auth state volume is non-empty but has no layout marker",
+                smoke_marker=".agent-dev-auth-write-smoke",
+            ),
+        ),
+        legacy_volume="agent-dev-cursor-home",
+        reconciliation=JsonFieldReconciliation(
+            volume_key="state",
+            seed_relative_path="cli-config.json",
+            state_relative_path="cli-config.json",
+            managed_field="permissions",
+        ),
+    )
+
+
 def build_builtin_registry() -> AgentRegistry:
     """Build the fixed trusted registry deployed with the current platform."""
     return AgentRegistry(
         (
-            _LegacyBrokerDriver("codex", "OpenAI Codex"),
-            _LegacyBrokerDriver("cursor", "Cursor"),
+            _LegacyBrokerDriver("codex", "OpenAI Codex", _codex_state_adapter()),
+            _LegacyBrokerDriver("cursor", "Cursor", _cursor_state_adapter()),
         )
     ).freeze()
 
