@@ -1244,6 +1244,8 @@ Codex/Cursor E2E continues to pass.
 
 # Phase 3 — Runtime Backend Extraction
 
+Status: **Complete — MA2-RT-001 through MA2-RT-005**
+
 ## Objective
 
 Separate agent semantics from Podman execution.
@@ -1277,11 +1279,80 @@ ResolvedExecutionPlan
 
 `PodmanBackend` executes the plan.
 
+### Implementation outcome
+
+`MA2-RT-001` through `MA2-RT-005` establish the runtime execution boundary:
+
+- `ResolvedExecutionPlan` carries the broker-authorized workspace/reference/task
+  mounts, provider state and policy artifacts, environment, resources, network
+  requirements, interaction mode, and capability/security placeholders;
+- `RuntimeBackend` defines provider-neutral execution and normalized interactive
+  control/output contracts;
+- `PodmanBackend` translates a resolved plan into the rootless Podman executor
+  envelope and owns process lifetime, PTY plumbing, cancellation, cidfile cleanup,
+  environment injection, mount translation, resource flags, and network flags;
+- `broker/runtime_io.py` translates RPC input/resize/cancel frames into the
+  provider-neutral runtime control contract and translates runtime output back to
+  broker RPC output frames;
+- the shared raw-Podman runtime dispatcher owns interactive/noninteractive
+  process selection, PTY setup, stdout streaming, input, resize, cancellation,
+  signal escalation, cidfile lifecycle, and container cleanup; provider auth now
+  supplies only the driver-declared interaction requirement and timeout;
+- optional GitNexus indexing remains a non-agent runtime consumer: the broker
+  authorizes the selected task workspace and delegates noninteractive execution
+  through the runtime boundary without registering GitNexus as an `AgentDriver`;
+- GitNexus repository index data remains in the authorized task workspace, while
+  its global registry and LadybugDB runtime state persist in an isolated
+  per-task home under `<project>/runtime/gitnexus/<task>/`, mounted as
+  `/gitnexus-home:rw` with `HOME=/gitnexus-home`; the container root remains
+  read-only;
+- a missing per-task GitNexus registry triggers a one-time forced rebuild so a
+  persisted repository-local index is not treated as finalized without its
+  corresponding registry; later runs retain the normal incremental path.
+
+The optional GitNexus intelligence image remains outside the agent registry. A
+failure to build that optional image is still non-fatal for core executors and
+is reported as a warning.
+
+#### Known GitNexus limitation and deferred optional work
+
+`agentctl index` remains an offline runtime operation (`network=none`). The
+current intelligence image does not pre-install the optional LadybugDB FTS
+extension. GitNexus may therefore attempt an extension download, fail because
+network access is disabled, and continue with a warning that FTS features are
+unavailable. A successful repository analysis without FTS satisfies the RT-005
+runtime acceptance criteria; FTS is not part of the current core execution
+contract.
+
+TODO (optional): prepare the compatible LadybugDB FTS extension during the
+network-enabled intelligence-image/bootstrap stage, seed the extension into new
+per-task GitNexus runtime homes, and switch runtime extension handling to a
+load-only/offline mode. This enhancement must preserve `network=none` for normal
+indexing, the read-only container root, per-task state isolation, and GitNexus's
+status as a non-agent runtime consumer. Failure to prepare the optional FTS
+extension must remain non-fatal for Codex/Cursor executors and for GitNexus
+indexing without FTS.
+
+The broker continues to authorize project paths and construct the resolved plan.
+Provider drivers remain declarative and do not invoke Podman. Podman operations
+used for image build, provider-state preparation, smoke checks, and other broker
+control-plane maintenance remain separate from resolved agent-run execution and
+do not reintroduce provider CLI semantics into the runtime backend.
+
+The frozen executor boundary and provider invocation contracts remain unchanged.
+
 ### Exit Criteria
 
 No provider driver directly executes Podman.
 
 No Podman runtime module contains provider-specific CLI logic.
+
+Interactive/noninteractive process-control mechanics are runtime-owned rather
+than provider-owned.
+
+GitNexus indexing uses the runtime boundary without becoming an `AgentDriver` or
+agent-registry entry, and failure of its optional image build remains non-fatal
+to core executors.
 
 ---
 

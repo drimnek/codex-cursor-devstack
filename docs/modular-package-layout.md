@@ -1,6 +1,6 @@
 # Modular Package Layout
 
-Status: **CORE and AgentDriver phases implemented through MA2-DRV-006**
+Status: **CORE, AgentDriver, and Runtime Backend phases implemented through MA2-RT-005**
 
 This document records the implemented Python package and compatibility-entrypoint
 boundary after the completed CORE extraction series.
@@ -16,9 +16,10 @@ authentication, version probes, state metadata, configuration reconciliation,
 and run-command construction are owned by drivers rather than generic broker
 operations.
 
-Podman execution, execution-plan construction, and provider-neutral policy
-resolution remain later migration stages described in
-`docs/multi-agent-architecture-v0.2.md`.
+The resolved execution-plan, Podman runtime-backend, streaming/process-control,
+and non-agent GitNexus runtime-consumer boundaries are implemented through
+`MA2-RT-005`. Provider-neutral policy resolution remains the next major
+migration stage described in `docs/multi-agent-architecture-v0.2.md`.
 
 ## Current package structure
 
@@ -37,7 +38,8 @@ platform-src/
 │   │   ├── __init__.py
 │   │   ├── cli.py
 │   │   ├── daemon.py
-│   │   └── rpc.py
+│   │   ├── rpc.py
+│   │   └── runtime_io.py
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── models.py
@@ -49,21 +51,24 @@ platform-src/
 │   │   ├── worktrees.py
 │   │   └── locking.py
 │   ├── execution/
-│   │   └── __init__.py
+│   │   ├── __init__.py
+│   │   └── plan.py
 │   ├── policy/
 │   │   └── __init__.py
 │   └── runtime/
-│       └── __init__.py
+│       ├── __init__.py
+│       ├── base.py
+│       └── podman.py
 └── bin/
     ├── agentctl
     └── agentd
 ```
 
-`agents` now contains the provider-neutral driver/state contracts, trusted
-registry, and both concrete reference drivers (`CodexDriver` and
-`CursorDriver`). `execution`, `policy`, and `runtime` remain structural package
-boundaries for subsequent migration phases and should not yet be interpreted as
-implemented execution-plan, policy-engine, or runtime-backend subsystems.
+`agents` contains the provider-neutral driver/state contracts, trusted registry,
+and both concrete reference drivers (`CodexDriver` and `CursorDriver`).
+`execution/plan.py` now owns the resolved executor-plan model, while `runtime`
+contains the provider-neutral backend contract and concrete `PodmanBackend`.
+`policy` remains the major structural placeholder for the next migration phase.
 
 ## Public entrypoint boundary
 
@@ -200,25 +205,105 @@ and minimal capability set can be registered temporarily and consumed by
 generic broker paths. No fake-provider identifier or command is present in the
 production registry or project/task/Git/runtime modules.
 
-## Responsibilities still in the broker daemon
-
-After concrete Codex/Cursor driver extraction, `agentdev/broker/daemon.py`
-continues to own or orchestrate runtime-facing concerns including:
+## Implemented execution-plan and runtime boundary
 
 ```text
-executor Podman argument construction and invocation
-workspace/reference/task metadata mount selection
-provider-state migration execution from driver metadata
-resource and network controls
-PTY and interactive executor streaming
-container lifecycle and cancellation
-image build/smoke orchestration
+agentdev/execution/plan.py
+agentdev/runtime/base.py
+agentdev/runtime/podman.py
+agentdev/broker/runtime_io.py
 ```
 
-Provider-native auth/status/version/run command syntax and provider-specific
-state/configuration metadata no longer belong to generic broker operations.
-These remaining runtime-facing responsibilities are the input to the runtime
-backend extraction phase.
+`execution/plan.py` defines the immutable `ResolvedExecutionPlan` consumed by the
+runtime layer. Broker orchestration authorizes project-derived host paths and
+resolves provider `RunSpec` data, state mounts, policy artifacts, task
+environment, resources, network requirements, and interaction mode before a
+runtime backend is invoked.
+
+`runtime/base.py` defines `RuntimeBackend`, normalized runtime completion, and
+input/resize/cancel control events without depending on RPC framing or provider
+CLI semantics.
+
+`runtime/podman.py` implements `PodmanBackend` and owns translation of resolved
+plans into the rootless Podman executor envelope, including mounts, environment,
+resource/network flags, read-only rootfs controls, PTY/process lifetime,
+cancellation, and interactive container cleanup.
+
+`broker/runtime_io.py` remains broker-owned because it maps RPC frames to the
+provider-neutral runtime I/O contract. This keeps RPC JSON/base64 framing out of
+the runtime implementation.
+
+`MA2-RT-004` completes the process-control boundary: raw Podman execution selects
+interactive versus noninteractive streaming inside the runtime layer, and the
+runtime owns PTY setup, stdout forwarding, input, resize, cancellation, signal
+escalation, cidfiles, and cleanup. Provider authentication supplies only its
+driver-declared interaction requirement and timeout.
+
+`MA2-RT-005` proves that the runtime layer is not synonymous with the agent
+registry. GitNexus indexing is authorized by the broker and executed
+noninteractively through the runtime boundary, but GitNexus is neither an
+`AgentDriver` nor a production registry entry. Failure to build its optional
+intelligence image remains non-fatal for core executors.
+
+GitNexus keeps two persistent state scopes without widening the executor trust
+boundary:
+
+```text
+task workspace/.gitnexus/                  repository-local index
+<project>/runtime/gitnexus/<task>/         per-task GitNexus runtime home
+  .gitnexus/registry.json                  persistent repository registry
+  .lbdb/                                   LadybugDB runtime/extension state
+```
+
+The per-task runtime home is mounted only at `/gitnexus-home:rw` and supplied as
+`HOME=/gitnexus-home`; the container root remains read-only and no writable whole
+`/root` is introduced. When the per-task registry is absent, indexing performs a
+one-time forced rebuild so a previously persisted repository index cannot remain
+paired with a missing registry. Subsequent runs retain normal incremental
+analysis behavior.
+
+GitNexus indexing continues to run with task networking disabled. The current
+intelligence image does not pre-seed the optional LadybugDB FTS extension, so an
+offline index run may report `FTS extension unavailable; continuing without FTS
+features`. This is a known degraded optional capability, not an RT-005 failure:
+the repository index can still finalize successfully without FTS.
+
+TODO (optional GitNexus enhancement): during intelligence-image/bootstrap
+preparation, pre-install a version-compatible LadybugDB FTS extension and seed it
+into new per-task GitNexus homes, then use a load-only/offline runtime mode. This
+must remain optional and non-fatal, must not grant `agentctl index` task-network
+access, and must not turn GitNexus into an `AgentDriver`.
+
+The agent-run path is now:
+
+```text
+AgentDriver -> RunSpec
+             |
+             v
+broker authorization -> ResolvedExecutionPlan
+                         |
+                         v
+                    PodmanBackend
+```
+
+## Responsibilities still in the broker daemon
+
+After runtime-backend extraction, `agentdev/broker/daemon.py` continues to own or
+orchestrate control-plane concerns including:
+
+```text
+project/task path authorization and ResolvedExecutionPlan construction
+provider-state migration execution from driver metadata
+provider auth/status/version orchestration and RPC framing
+image build, version, and smoke orchestration
+GitNexus task authorization and non-agent runtime request construction
+other control-plane Podman maintenance operations
+```
+
+Agent-run Podman argv translation, resolved mount/environment/resource/network
+materialization, PTY/process lifetime, cancellation, and interactive container
+cleanup are owned by `PodmanBackend`. RPC input/output framing remains in the
+broker adapter rather than the runtime backend.
 
 ## Frozen behavioral contracts
 
@@ -261,6 +346,11 @@ tests/codex-driver-regression.py
 tests/cursor-driver-regression.py
 tests/provider-state-driver-regression.py
 tests/fake-driver-extensibility-regression.py
+tests/resolved-execution-plan-regression.py
+tests/runtime-backend-contract-regression.py
+tests/podman-backend-regression.py
+tests/runtime-streaming-boundary-regression.py
+tests/gitnexus-runtime-consumer-regression.py
 ```
 
 They complement the frozen characterization and security tests, including:
@@ -311,35 +401,28 @@ refactored broker.
 
 ## Next extraction boundary
 
-The completed CORE and AgentDriver phases provide the provider-neutral domain,
-RPC, driver-contract, trusted-registry, concrete reference-driver, and tested
-third-provider extensibility foundation.
+The completed CORE, AgentDriver, and Runtime Backend phases through `MA2-RT-005`
+provide the provider-neutral domain, provider, execution-plan, streaming, and
+runtime foundations while preserving GitNexus as a non-agent runtime consumer.
 
-The next implementation boundary is:
+The next architecture boundary is the provider-neutral policy model:
 
 ```text
-MA2-RT-001 — ResolvedExecutionPlan
-
-agent ID
-image and command
-environment and interaction mode
-workspace/reference/task metadata mounts
-provider state and policy artifacts
-resource/network requirements
-read-only/read-write mode
-security/capability placeholders
+ExecutionPolicy
+PolicyResolver
+ExecutionProfile
+SecurityClass
+CapabilityRequirement
 ```
 
-Provider drivers must continue to describe provider semantics without taking
-ownership of raw project authorization or Podman execution.
+The next-stage rule is:
 
-The next-stage extraction rule is:
-
-1. keep project/task/Git/locking behavior provider-neutral;
-2. move provider-specific state, authentication, version, command, and sandbox
-   semantics behind the driver contract;
-3. preserve the frozen provider invocation contract unless a backlog item
-   explicitly changes it;
-4. keep Podman/runtime execution separate from provider-driver semantics;
-5. do not promote current credential or network warnings into hardened claims
-   without observable enforcement and acceptance tests.
+1. keep `ResolvedExecutionPlan` as the only input to concrete agent-run runtime
+   execution;
+2. resolve security semantics in broker-owned policy code before Podman starts;
+3. translate provider-neutral policy into provider-native artifacts only through
+   trusted drivers;
+4. preserve the frozen provider invocation and executor-boundary contracts until
+   a policy case explicitly changes them;
+5. do not mark credential isolation or destination-level egress as hardened until
+   observable enforcement and adversarial acceptance tests exist.
