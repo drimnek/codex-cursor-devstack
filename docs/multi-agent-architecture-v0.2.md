@@ -61,10 +61,12 @@ execution/runtime boundary:
     GitNexus as a non-agent runtime consumer
 ```
 
-`policy/` is the next major unimplemented architecture boundary. Phase 4 starts
-with `MA2-POL-001`, the provider-neutral `ExecutionPolicy` schema. The existing
-credential-confidentiality and destination-level task-egress findings remain
-explicit later security work and are not prerequisites for defining the schema.
+Phase 4 policy work is implemented through `MA2-POL-002`: `ExecutionPolicy`
+provides the strict normalized provider-neutral schema and `PolicyResolver`
+provides monotonic composition of the platform baseline with sparse project,
+profile, and run restriction layers. Built-in execution profiles are the next
+requirement (`MA2-POL-003`). The existing credential-confidentiality and
+destination-level task-egress findings remain explicit later security work.
 
 
 ---
@@ -622,21 +624,47 @@ Run Restrictions
 
 Policy composition must be monotonic.
 
-A lower level may restrict rights granted by a higher level.
+The platform baseline is one complete `ExecutionPolicy`. Project policy,
+execution profile, and run restrictions are sparse restriction layers that use
+the same nested field names. Omitted fields inherit the current effective
+value; supplied fields are normalized through the `ExecutionPolicy` schema
+before monotonic validation.
 
-A lower level must not override platform-level hard denial.
+The merge order and per-field narrowing rules are:
 
-Example:
+```text
+workspace.access                    none <= read <= write
+reference.access                    none <= read
+filesystem.external                 deny <= read <= write
+network.task_shell.mode             deny <= allowlist <= allow
+credentials.provider_auth.task_shell
+                                    deny <= allow
+Git read/commit/push                 false <= true
+sandbox.required                    false <= true  (true is stricter)
+resources cpu/memory/pids           smaller positive ceiling is stricter
+security_class                      compatibility <= hardened
+```
+
+For `network.task_shell` allowlists, a lower allowlist must be a subset of the
+effective upper allowlist. Moving from `allowlist` to `deny` clears inherited
+destinations. Moving from unrestricted `allow` to `allowlist` requires explicit
+destinations.
+
+A lower level may restrict rights or demand stronger isolation, but it must not
+widen an effective upper-layer restriction. Contradictory widening is rejected
+rather than silently clamped. For example:
 
 ```text
 platform:
-    private_network = deny
+    task_shell_network = deny
 
 project:
-    private_network = allow
+    task_shell_network = allow
 ```
 
-must be invalid.
+is invalid. The same rule applies at every boundary in the hierarchy, so a
+profile or run restriction cannot re-open a denial introduced by platform or
+project policy.
 
 ---
 
@@ -1027,7 +1055,9 @@ platform-src/
 │   ├── execution/
 │   │   └── plan.py
 │   ├── policy/
-│   │   └── __init__.py
+│   │   ├── __init__.py
+│   │   ├── schema.py
+│   │   └── resolver.py
 │   └── runtime/
 │       ├── base.py
 │       └── podman.py
@@ -1064,13 +1094,13 @@ broker/daemon.py
     control-plane operations, and retains separate maintenance Podman operations
 
 policy/
-    remains the next major implementation boundary
+    owns the normalized ExecutionPolicy schema and monotonic PolicyResolver
 ```
 
-`agents`, `execution`, and `runtime` are implemented subsystems. At this
-checkpoint `policy` remains the only major structural placeholder; `MA2-POL-001`
-introduces its schema, while the resolver, profiles, capability matching,
-provider policy compilers, and policy hash remain later Phase 4 requirements.
+`agents`, `execution`, and `runtime` are implemented subsystems. Policy work is
+implemented through `MA2-POL-002`: the schema and monotonic resolver are now
+concrete package modules. Profiles, capability matching, provider policy
+compilers, legacy mapping, and policy hashing remain later Phase 4 requirements.
 
 The broader target source tree remains:
 
@@ -1425,7 +1455,7 @@ to core executors.
 
 # Phase 4 — Provider-Neutral Policy Model
 
-Status: **Next — MA2-POL-001**
+Status: **In progress — MA2-POL-001 and MA2-POL-002 complete; next MA2-POL-003**
 
 ## Objective
 
@@ -1747,22 +1777,24 @@ The practical sequence is:
 4. extract CursorDriver                                 [complete]
 5. extract RuntimeBackend / PodmanBackend               [complete]
 
-6. define ExecutionPolicy schema                        [next: MA2-POL-001]
-7. add monotonic resolver, profiles, capability checks
-8. map legacy flags and compile provider-native policy
-9. add canonical policy serialization/hash
+6. define ExecutionPolicy schema                        [complete: MA2-POL-001]
+7. add monotonic PolicyResolver                          [complete: MA2-POL-002]
+8. add built-in profiles                                 [next: MA2-POL-003]
+9. add capability checks
+10. map legacy flags and compile provider-native policy
+11. add canonical policy serialization/hash
 
-10. close credential confidentiality
-11. close task egress restriction
+12. close credential confidentiality
+13. close task egress restriction
 
-12. introduce Run records
-13. make agentctl registry-driven
+14. introduce Run records
+15. make agentctl registry-driven
 
-14. add CopilotDriver
-15. add AntigravityDriver
+16. add CopilotDriver
+17. add AntigravityDriver
 
-16. remove legacy provider-specific interfaces
-17. pilot
+18. remove legacy provider-specific interfaces
+19. pilot
 ```
 
 The crucial ordering rule is:

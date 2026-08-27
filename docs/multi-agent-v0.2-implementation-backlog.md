@@ -1283,6 +1283,7 @@ Goal: make broker-owned execution policy the source of security semantics.
 ---
 
 ## MA2-POL-001 — Define `ExecutionPolicy` Schema
+### Status: DONE
 
 Priority: **P0**
 
@@ -1335,6 +1336,7 @@ without provider-specific fields.
 ---
 
 ## MA2-POL-002 — Implement Monotonic `PolicyResolver`
+### Status: DONE
 
 Priority: **P0**
 
@@ -1355,9 +1357,25 @@ without allowing lower layers to widen hard restrictions.
 
 ### Implementation
 
-Define explicit merge semantics for each field.
+Use a complete `ExecutionPolicy` as the platform baseline. Treat project
+policy, execution profile, and run restrictions as sparse restriction layers
+using the same nested policy field names; omitted fields inherit the current
+effective value.
 
-Reject contradictory escalation attempts.
+Define explicit monotonic semantics for every field:
+
+```text
+access/visibility/network rights    lower permission is more restrictive
+Git permission booleans             false is more restrictive
+sandbox.required                    true is more restrictive
+resource ceilings                   smaller is more restrictive
+security class                      hardened is stronger than compatibility
+network allowlist                   lower set must be a subset
+```
+
+Normalize each candidate layer through `ExecutionPolicy` before accepting it.
+Reject unknown sparse fields and contradictory escalation attempts rather than
+silently clamping them.
 
 ### Tests
 
