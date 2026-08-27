@@ -31,8 +31,8 @@ The v0.2 design remains intentionally local and constrained. It is not intended 
 
 ### Current implementation checkpoint
 
-The baseline freeze and the mechanical CORE modularization are complete through
-`MA2-CORE-006`.
+The baseline freeze, mechanical CORE modularization, AgentDriver extraction, and
+runtime-backend extraction are complete through `MA2-RT-005`.
 
 The implementation now has:
 
@@ -41,17 +41,30 @@ thin agentctl/agentd compatibility entrypoints
 packaged broker/controller implementation
 dedicated broker RPC boundary
 
-provider-neutral:
+provider-neutral domain core:
     validation and domain models
     project and Git handoff services
     task, dependency, and worktree services
     locking service
+
+provider boundary:
+    AgentDriver and AgentCapabilities
+    trusted in-tree AgentRegistry
+    CodexDriver and CursorDriver
+    provider-owned state/auth/version/run semantics
+
+execution/runtime boundary:
+    ResolvedExecutionPlan
+    RuntimeBackend
+    PodmanBackend
+    provider-neutral interactive/noninteractive process control
+    GitNexus as a non-agent runtime consumer
 ```
 
-The AgentDriver, runtime-backend, execution-policy, and provider-registry layers
-described below remain target architecture. Provider-specific execution and
-Podman runtime behavior still reside in the broker daemon and are the next
-extraction boundaries.
+`policy/` is the next major unimplemented architecture boundary. Phase 4 starts
+with `MA2-POL-001`, the provider-neutral `ExecutionPolicy` schema. The existing
+credential-confidentiality and destination-level task-egress findings remain
+explicit later security work and are not prerequisites for defining the schema.
 
 
 ---
@@ -537,12 +550,12 @@ filesystem:
   external: deny
 
 network:
-  task:
+  task_shell:
     mode: deny
 
 credentials:
   provider_auth:
-    task_visibility: deny
+    task_shell: deny
 
 git:
   read: true
@@ -556,7 +569,37 @@ resources:
   cpu: 4
   memory: 8g
   pids: 1024
+
+security_class: hardened
 ```
+
+For the initial `MA2-POL-001` schema, `task_shell` is the canonical execution-
+plane name for both task networking and provider-auth visibility. The schema
+uses the following provider-neutral value vocabulary:
+
+```text
+workspace.access                  none | read | write
+reference.access                  none | read
+filesystem.external               deny | read | write
+network.task_shell.mode           deny | allowlist | allow
+credentials.provider_auth.task_shell
+                                  deny | allow
+security_class                    hardened | compatibility
+```
+
+`network.task_shell.destinations` is meaningful only for `allowlist` mode and
+is normalized into deterministic ordering. Destination syntax and hardened
+egress enforcement remain later policy/security concerns rather than being
+claimed by this schema.
+
+Policy resource limits are normalized before policy resolution. `cpu` must be a
+positive finite number and `pids` a positive integer. `memory` accepts either a
+positive integer byte count or a positive integer quantity using `k`, `m`, `g`,
+or `t` suffixes (case-insensitive); suffixes use 1024-based units. For example,
+`8g` and `8192m` normalize to the same integer byte count. Zero, negative,
+fractional memory quantities, and arbitrary strings are invalid. This policy-
+level normalization does not change the existing runtime `ResourceLimits.memory`
+representation established by Phase 3.
 
 ---
 
@@ -954,18 +997,24 @@ They must not redefine the platform security contract.
 
 ---
 
-# 18. Source Tree: Current CORE Layout and Target
+# 18. Source Tree: Current Implemented Layout and Target
 
-The implemented package layout after `MA2-CORE-006` is:
+The implemented package layout after `MA2-RT-005` is:
 
 ```text
 platform-src/
 ├── agentdev/
+│   ├── agents/
+│   │   ├── base.py
+│   │   ├── registry.py
+│   │   ├── state.py
+│   │   ├── codex.py
+│   │   └── cursor.py
 │   ├── broker/
 │   │   ├── cli.py
 │   │   ├── daemon.py
-│   │   └── rpc.py
-│   │
+│   │   ├── rpc.py
+│   │   └── runtime_io.py
 │   ├── core/
 │   │   ├── models.py
 │   │   ├── validation.py
@@ -975,35 +1024,53 @@ platform-src/
 │   │   ├── dependencies.py
 │   │   ├── worktrees.py
 │   │   └── locking.py
-│   │
-│   ├── agents/
 │   ├── execution/
+│   │   └── plan.py
 │   ├── policy/
+│   │   └── __init__.py
 │   └── runtime/
-│
+│       ├── base.py
+│       └── podman.py
 └── bin/
     ├── agentctl
     └── agentd
 ```
 
-`platform-src/bin/agentd` and `platform-src/bin/agentctl` are thin compatibility
-entrypoints.
+`platform-src/bin/agentd` and `platform-src/bin/agentctl` remain thin
+compatibility entrypoints.
 
 At this checkpoint:
 
 ```text
-broker/rpc.py
-    owns RPC decoding, validation, dispatch, framing, and socket serving
-
 core/*
     owns provider-neutral project/task/Git/worktree/dependency/locking behavior
 
+agents/*
+    owns the AgentDriver contract, trusted registry, provider state semantics,
+    and concrete Codex/Cursor provider behavior
+
+execution/plan.py
+    owns the broker-authorized ResolvedExecutionPlan boundary
+
+runtime/*
+    owns provider-neutral execution and concrete Podman translation/process
+    control without provider CLI semantics
+
+broker/runtime_io.py
+    adapts broker RPC frames to the provider-neutral runtime I/O contract
+
 broker/daemon.py
-    still owns provider-specific execution and current Podman/runtime behavior
+    authorizes project/task paths, resolves run plans, orchestrates provider
+    control-plane operations, and retains separate maintenance Podman operations
+
+policy/
+    remains the next major implementation boundary
 ```
 
-`agents`, `execution`, `policy`, and `runtime` are currently package boundaries
-for later migration phases rather than completed subsystems.
+`agents`, `execution`, and `runtime` are implemented subsystems. At this
+checkpoint `policy` remains the only major structural placeholder; `MA2-POL-001`
+introduces its schema, while the resolver, profiles, capability matching,
+provider policy compilers, and policy hash remain later Phase 4 requirements.
 
 The broader target source tree remains:
 
@@ -1358,6 +1425,8 @@ to core executors.
 
 # Phase 4 — Provider-Neutral Policy Model
 
+Status: **Next — MA2-POL-001**
+
 ## Objective
 
 Make the broker-owned execution policy the source of security semantics.
@@ -1672,29 +1741,28 @@ The practical sequence is:
 
 ```text
 0. freeze baseline                                      [complete]
-
 1. modularize agentd                                    [complete]
+2. define AgentDriver / AgentCapabilities / RunSpec     [complete]
+3. extract CodexDriver                                  [complete]
+4. extract CursorDriver                                 [complete]
+5. extract RuntimeBackend / PodmanBackend               [complete]
 
-2. define AgentDriver / AgentCapabilities / RunSpec     [next]
-3. extract CodexDriver
-4. extract CursorDriver
+6. define ExecutionPolicy schema                        [next: MA2-POL-001]
+7. add monotonic resolver, profiles, capability checks
+8. map legacy flags and compile provider-native policy
+9. add canonical policy serialization/hash
 
-5. extract PodmanBackend
+10. close credential confidentiality
+11. close task egress restriction
 
-6. introduce execution profiles
-7. introduce provider-neutral policy
+12. introduce Run records
+13. make agentctl registry-driven
 
-8. close credential confidentiality
-9. close task egress restriction
+14. add CopilotDriver
+15. add AntigravityDriver
 
-10. introduce Run records
-11. make agentctl registry-driven
-
-12. add CopilotDriver
-13. add AntigravityDriver
-
-14. remove legacy provider-specific interfaces
-15. pilot
+16. remove legacy provider-specific interfaces
+17. pilot
 ```
 
 The crucial ordering rule is:
