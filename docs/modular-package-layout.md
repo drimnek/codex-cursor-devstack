@@ -1,6 +1,6 @@
 # Modular Package Layout
 
-Status: **CORE, AgentDriver, Runtime Backend, and Policy phases implemented through MA2-POL-002**
+Status: **CORE, AgentDriver, Runtime Backend, and Policy phases implemented through MA2-POL-003**
 
 This document records the implemented Python package and compatibility-entrypoint
 boundary after the completed CORE extraction series.
@@ -19,8 +19,8 @@ operations.
 The resolved execution-plan, Podman runtime-backend, streaming/process-control,
 and non-agent GitNexus runtime-consumer boundaries are implemented through
 `MA2-RT-005`. The provider-neutral `ExecutionPolicy` schema and monotonic
-`PolicyResolver` are implemented through `MA2-POL-002`; built-in execution
-profiles are the next policy requirement.
+`PolicyResolver` and trusted built-in execution profiles are implemented through
+`MA2-POL-003`; capability requirement matching is the next policy requirement.
 
 ## Current package structure
 
@@ -57,7 +57,8 @@ platform-src/
 │   ├── policy/
 │   │   ├── __init__.py
 │   │   ├── schema.py
-│   │   └── resolver.py
+│   │   ├── resolver.py
+│   │   └── profiles.py
 │   └── runtime/
 │       ├── __init__.py
 │       ├── base.py
@@ -71,8 +72,10 @@ platform-src/
 and both concrete reference drivers (`CodexDriver` and `CursorDriver`).
 `execution/plan.py` now owns the resolved executor-plan model, while `runtime`
 contains the provider-neutral backend contract and concrete `PodmanBackend`.
-`policy/schema.py` owns the strict normalized `ExecutionPolicy` model and
-`policy/resolver.py` owns monotonic platform/project/profile/run composition.
+`policy/schema.py` owns the strict normalized `ExecutionPolicy` model,
+`policy/resolver.py` owns monotonic platform/project/profile/run composition, and
+`policy/profiles.py` owns the trusted built-in review/implement/dependency/compatibility
+profile definitions.
 
 ## Public entrypoint boundary
 
@@ -353,6 +356,7 @@ tests/fake-driver-extensibility-regression.py
 tests/resolved-execution-plan-regression.py
 tests/execution-policy-schema-regression.py
 tests/policy-resolver-regression.py
+tests/execution-profiles-regression.py
 tests/runtime-backend-contract-regression.py
 tests/podman-backend-regression.py
 tests/runtime-streaming-boundary-regression.py
@@ -411,15 +415,15 @@ The completed CORE, AgentDriver, and Runtime Backend phases through `MA2-RT-005`
 provide the provider-neutral domain, provider, execution-plan, streaming, and
 runtime foundations while preserving GitNexus as a non-agent runtime consumer.
 
-The provider-neutral policy model is implemented through `MA2-POL-002`:
+The provider-neutral policy model is implemented through `MA2-POL-003`:
 
 ```text
 ExecutionPolicy   implemented
 PolicyResolver    implemented
-ExecutionProfile  next: MA2-POL-003
+ExecutionProfile  implemented built-ins: review/implement/dependency/compatibility
 SecurityClass     represented in ExecutionPolicy; capability semantics later
 CapabilityRequirement
-                  later: MA2-POL-004
+                  next: MA2-POL-004
 ```
 
 The next-stage rule is:

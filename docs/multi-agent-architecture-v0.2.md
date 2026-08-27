@@ -61,12 +61,14 @@ execution/runtime boundary:
     GitNexus as a non-agent runtime consumer
 ```
 
-Phase 4 policy work is implemented through `MA2-POL-002`: `ExecutionPolicy`
-provides the strict normalized provider-neutral schema and `PolicyResolver`
+Phase 4 policy work is implemented through `MA2-POL-003`: `ExecutionPolicy`
+provides the strict normalized provider-neutral schema, `PolicyResolver`
 provides monotonic composition of the platform baseline with sparse project,
-profile, and run restriction layers. Built-in execution profiles are the next
-requirement (`MA2-POL-003`). The existing credential-confidentiality and
-destination-level task-egress findings remain explicit later security work.
+profile, and run restriction layers, and the trusted built-in review,
+implement, dependency, and compatibility profiles are defined. Capability
+requirement matching is next (`MA2-POL-004`). The existing credential-
+confidentiality and destination-level task-egress findings remain explicit
+later security work.
 
 
 ---
@@ -670,7 +672,17 @@ project policy.
 
 # 10. Execution Profiles
 
-The initial system should expose only a small set of profiles.
+The initial system exposes four trusted broker-owned profiles. Profiles are
+materialized as sparse `ExecutionPolicy` restriction layers and resolved by the
+monotonic `PolicyResolver`. Fields not stated by a profile inherit the current
+effective value from the platform/project layers.
+
+`review`, `implement`, and `dependency` do not select a security class; the
+effective `security_class` is inherited from platform/project policy or may be
+strengthened by later restrictions. The explicit `compatibility` profile is the
+legacy-compatibility bundle and pins `security_class=compatibility`. Therefore a
+platform/project requirement for `hardened` rejects the compatibility profile
+rather than being silently downgraded.
 
 ## 10.1 Review
 
@@ -681,6 +693,7 @@ task network     denied
 sandbox          required
 Git commit       denied
 provider secrets hidden from task shell
+security class   inherited
 ```
 
 ---
@@ -696,6 +709,7 @@ Git read         allowed
 Git commit       allowed
 Git push         denied
 provider secrets hidden from task shell
+security class   inherited
 ```
 
 ---
@@ -709,35 +723,50 @@ workspace        read-write
 sandbox          required
 
 task network:
-    explicit destination allowlist
+    explicit destination allowlist supplied for the run
 
 Git commit       allowed
 Git push         denied
 
 provider credentials:
     hidden from task shell
+
+security class   inherited
 ```
+
+The built-in dependency profile does not hard-code package registries. It must
+be materialized with at least one explicit task-shell destination, and normal
+policy resolution still rejects any destination or network mode wider than an
+upper-layer restriction.
 
 ---
 
 ## 10.4 Compatibility
 
-Compatibility replaces the conceptual role currently served by options such as Codex `--outer-only`.
+Compatibility replaces the conceptual role currently served by options such as
+Codex `--outer-only`.
+
+The built-in compatibility profile pins only:
 
 ```text
-outer Podman isolation         required
-
-provider-native sandbox        optional
-
-credential confidentiality
-from task subprocess           not guaranteed unless supported
-
-task-shell egress isolation    provider dependent
+security_class               compatibility
 ```
 
-Compatibility runs must be clearly marked as weaker than hardened runs.
+It does not actively relax sandbox, credential, filesystem, Git, or network
+controls inherited from upper layers. Those controls may therefore remain
+stricter than the minimum compatibility semantics. What compatibility does not
+claim is the hardened guarantee:
 
-They must not silently satisfy a workflow requiring hardened execution.
+```text
+outer Podman isolation         required by the runtime boundary
+provider-native sandbox        not guaranteed by the profile
+credential confidentiality    not guaranteed by the security class
+task-shell egress isolation    provider/capability dependent
+```
+
+Compatibility runs must be clearly marked as weaker than hardened runs. A
+hardened upper-layer requirement cannot be changed to compatibility by applying
+this profile.
 
 ---
 
@@ -1057,7 +1086,8 @@ platform-src/
 │   ├── policy/
 │   │   ├── __init__.py
 │   │   ├── schema.py
-│   │   └── resolver.py
+│   │   ├── resolver.py
+│   │   └── profiles.py
 │   └── runtime/
 │       ├── base.py
 │       └── podman.py
@@ -1094,12 +1124,13 @@ broker/daemon.py
     control-plane operations, and retains separate maintenance Podman operations
 
 policy/
-    owns the normalized ExecutionPolicy schema and monotonic PolicyResolver
+    owns the normalized ExecutionPolicy schema, monotonic PolicyResolver, and
+    trusted built-in execution profiles
 ```
 
 `agents`, `execution`, and `runtime` are implemented subsystems. Policy work is
-implemented through `MA2-POL-002`: the schema and monotonic resolver are now
-concrete package modules. Profiles, capability matching, provider policy
+implemented through `MA2-POL-003`: schema, resolver, and the four built-in
+profiles are concrete package modules. Capability matching, provider policy
 compilers, legacy mapping, and policy hashing remain later Phase 4 requirements.
 
 The broader target source tree remains:
@@ -1455,7 +1486,7 @@ to core executors.
 
 # Phase 4 — Provider-Neutral Policy Model
 
-Status: **In progress — MA2-POL-001 and MA2-POL-002 complete; next MA2-POL-003**
+Status: **In progress — MA2-POL-001 through MA2-POL-003 complete; next MA2-POL-004**
 
 ## Objective
 
@@ -1779,8 +1810,8 @@ The practical sequence is:
 
 6. define ExecutionPolicy schema                        [complete: MA2-POL-001]
 7. add monotonic PolicyResolver                          [complete: MA2-POL-002]
-8. add built-in profiles                                 [next: MA2-POL-003]
-9. add capability checks
+8. add built-in profiles                                 [complete: MA2-POL-003]
+9. add capability checks                                  [next: MA2-POL-004]
 10. map legacy flags and compile provider-native policy
 11. add canonical policy serialization/hash
 

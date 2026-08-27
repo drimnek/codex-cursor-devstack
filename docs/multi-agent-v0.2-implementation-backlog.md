@@ -1391,6 +1391,7 @@ A project/run cannot override platform hard denials.
 ---
 
 ## MA2-POL-003 — Add Built-In Execution Profiles
+### Status: DONE
 
 Priority: **P0**
 
@@ -1411,7 +1412,15 @@ compatibility
 
 Store profile definitions as broker-owned trusted configuration.
 
-Profile meanings must match the architecture document.
+Profile meanings must match the architecture document. Review, implement, and
+dependency are sparse operational restriction layers and do not select a
+security class; fields not specified by a profile inherit the effective upper
+policy. Dependency profile materialization requires an explicit
+task-shell destination allowlist supplied by the caller; public package
+registries are not hard-coded into the profile. The explicit compatibility
+profile selects `security_class=compatibility` without weakening unrelated
+upper-layer controls; a hardened upper-layer requirement therefore rejects it
+through the monotonic resolver.
 
 ### Tests
 
