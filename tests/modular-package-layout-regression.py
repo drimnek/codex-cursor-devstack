@@ -54,6 +54,7 @@ def main() -> None:
     codex_driver = PACKAGE / "agents" / "codex.py"
     cursor_driver = PACKAGE / "agents" / "cursor.py"
     execution_plan = PACKAGE / "execution" / "plan.py"
+    policy_schema = PACKAGE / "policy" / "schema.py"
     runtime_backend_base = PACKAGE / "runtime" / "base.py"
     podman_backend = PACKAGE / "runtime" / "podman.py"
     rpc_runtime_io = PACKAGE / "broker" / "runtime_io.py"
@@ -74,6 +75,7 @@ def main() -> None:
     assert codex_driver.is_file()
     assert cursor_driver.is_file()
     assert execution_plan.is_file()
+    assert policy_schema.is_file()
     assert runtime_backend_base.is_file()
     assert podman_backend.is_file()
     assert rpc_runtime_io.is_file()
@@ -114,6 +116,7 @@ def main() -> None:
         from agentdev.agents.state import ProviderStateAdapter
         from agentdev.broker import cli, daemon, rpc
         from agentdev.execution.plan import ResolvedExecutionPlan
+        from agentdev.policy.schema import ExecutionPolicy
         from agentdev.runtime.base import RuntimeBackend, RuntimeControl, RuntimeResult
         from agentdev.runtime.podman import PodmanBackend
         from agentdev.broker.runtime_io import RpcRuntimeIO
@@ -130,6 +133,7 @@ def main() -> None:
         assert hasattr(cli, "main") and hasattr(cli, "parser")
         assert hasattr(rpc, "handle_request") and hasattr(rpc, "BrokerOperations")
         assert ResolvedExecutionPlan.__module__ == "agentdev.execution.plan"
+        assert ExecutionPolicy.__module__ == "agentdev.policy.schema"
         assert inspect.isabstract(RuntimeBackend)
         assert RuntimeControl("cancel").kind == "cancel"
         assert RuntimeResult(0).exit_code == 0
