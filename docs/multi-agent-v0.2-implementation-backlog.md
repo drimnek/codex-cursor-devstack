@@ -1438,6 +1438,7 @@ Profiles resolve deterministically to provider-neutral policies.
 ---
 
 ## MA2-POL-004 — Implement Capability Requirement Matching
+### Status: DONE
 
 Priority: **P0**
 
@@ -1452,6 +1453,11 @@ Reject agents that cannot satisfy a requested policy/security class.
 Compute required capabilities from the resolved policy.
 
 Return a precise error listing missing capabilities.
+
+Capability matching must also validate the generic capability requirements
+already carried by `ResolvedExecutionPlan` before runtime execution. This keeps
+the current compatibility run path fail-closed while the profile-based public
+run interface is introduced by later requirements.
 
 No silent downgrade is permitted.
 

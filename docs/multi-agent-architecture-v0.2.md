@@ -61,14 +61,14 @@ execution/runtime boundary:
     GitNexus as a non-agent runtime consumer
 ```
 
-Phase 4 policy work is implemented through `MA2-POL-003`: `ExecutionPolicy`
+Phase 4 policy work is implemented through `MA2-POL-004`: `ExecutionPolicy`
 provides the strict normalized provider-neutral schema, `PolicyResolver`
 provides monotonic composition of the platform baseline with sparse project,
-profile, and run restriction layers, and the trusted built-in review,
-implement, dependency, and compatibility profiles are defined. Capability
-requirement matching is next (`MA2-POL-004`). The existing credential-
-confidentiality and destination-level task-egress findings remain explicit
-later security work.
+profile, and run restriction layers, the trusted built-in review, implement,
+dependency, and compatibility profiles are defined, and policy capability
+requirements are matched fail-closed against driver declarations. Legacy run
+flag mapping is next (`MA2-POL-005`). The existing credential-confidentiality
+and destination-level task-egress findings remain explicit later security work.
 
 
 ---
@@ -211,6 +211,31 @@ supported execution plan
 ```
 
 If the agent cannot satisfy a required capability, execution fails closed.
+
+`MA2-POL-004` makes this contract concrete. `AgentCapabilities` now distinguishes
+legacy compatibility modes, provider policy capabilities, and supported security
+classes. Compatibility is the default declared security class; `hardened` must
+be advertised explicitly and remains evidence-gated by the later security
+acceptance requirements.
+
+For a resolved compatibility policy, capability matching requires the operational
+workspace mode and `security_class=compatibility`; it does not pretend that
+provider-native sandboxing, provider-state protection, or task-shell egress
+controls are guaranteed. For a resolved hardened policy, the matcher additionally
+requires the policy-dependent capabilities that are actually requested:
+
+```text
+sandbox.required                         -> filesystem_sandbox
+network.task_shell.mode=deny             -> network_deny
+network.task_shell.mode=allowlist        -> network_allowlist
+credentials.provider_auth.task_shell=deny
+                                         -> provider_state_protection
+```
+
+The broker also validates the generic capability requirements already present in
+`ResolvedExecutionPlan.required_capabilities` immediately before runtime
+execution. This closes the current execution gate without prematurely mapping
+legacy flags to profiles or compiling provider-native policy.
 
 The broker must never silently downgrade a hardened execution profile.
 
@@ -1124,13 +1149,13 @@ broker/daemon.py
     control-plane operations, and retains separate maintenance Podman operations
 
 policy/
-    owns the normalized ExecutionPolicy schema, monotonic PolicyResolver, and
-    trusted built-in execution profiles
+    owns the normalized ExecutionPolicy schema, monotonic PolicyResolver,
+    trusted built-in execution profiles, and provider-neutral capability matching
 ```
 
 `agents`, `execution`, and `runtime` are implemented subsystems. Policy work is
-implemented through `MA2-POL-003`: schema, resolver, and the four built-in
-profiles are concrete package modules. Capability matching, provider policy
+implemented through `MA2-POL-004`: schema, resolver, the four built-in
+profiles, and capability matching are concrete package modules. Provider policy
 compilers, legacy mapping, and policy hashing remain later Phase 4 requirements.
 
 The broader target source tree remains:
@@ -1486,7 +1511,7 @@ to core executors.
 
 # Phase 4 — Provider-Neutral Policy Model
 
-Status: **In progress — MA2-POL-001 through MA2-POL-003 complete; next MA2-POL-004**
+Status: **In progress — MA2-POL-001 through MA2-POL-004 complete; next MA2-POL-005**
 
 ## Objective
 
@@ -1811,21 +1836,22 @@ The practical sequence is:
 6. define ExecutionPolicy schema                        [complete: MA2-POL-001]
 7. add monotonic PolicyResolver                          [complete: MA2-POL-002]
 8. add built-in profiles                                 [complete: MA2-POL-003]
-9. add capability checks                                  [next: MA2-POL-004]
-10. map legacy flags and compile provider-native policy
-11. add canonical policy serialization/hash
+9. add capability checks                                  [complete: MA2-POL-004]
+10. map legacy flags                                      [next: MA2-POL-005]
+11. compile provider-native policy
+12. add canonical policy serialization/hash
 
-12. close credential confidentiality
-13. close task egress restriction
+13. close credential confidentiality
+14. close task egress restriction
 
-14. introduce Run records
-15. make agentctl registry-driven
+15. introduce Run records
+16. make agentctl registry-driven
 
-16. add CopilotDriver
-17. add AntigravityDriver
+17. add CopilotDriver
+18. add AntigravityDriver
 
-18. remove legacy provider-specific interfaces
-19. pilot
+19. remove legacy provider-specific interfaces
+20. pilot
 ```
 
 The crucial ordering rule is:

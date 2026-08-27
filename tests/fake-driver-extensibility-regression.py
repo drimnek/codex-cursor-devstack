@@ -149,6 +149,8 @@ def test_registry_contract_and_minimal_capabilities() -> None:
     assert not caps.native_policy
     assert not caps.native_sandbox
     assert caps.compatibility_modes == frozenset()
+    assert caps.policy_capabilities == frozenset()
+    assert caps.security_classes == frozenset({"compatibility"})
     assert driver.state_spec() == (
         ProviderStateSpec(FAKE_STATE_VOLUME, FAKE_STATE_TARGET),
     )
@@ -279,6 +281,13 @@ def test_generic_auth_and_run_consume_fake_specs() -> None:
                 context=context,
                 run_spec=run_spec,
                 interaction_mode="interactive",
+                required_capabilities=frozenset(
+                    {
+                        "workspace:readonly" if kwargs.get("readonly", False) else "workspace:writable",
+                        "interactive-run",
+                    }
+                    | ({"compatibility:outer-only"} if kwargs.get("outer_only", False) else set())
+                ),
             ),
             execution_plan_argv=lambda plan: [
                 "runtime", plan.provider,

@@ -391,6 +391,12 @@ def check_run_invocations() -> None:
             def fake_create_plan(
                 cfg, provider, context, run_spec, *, readonly, outer_only, reference, git_common
             ):
+                required_capabilities = {
+                    "workspace:readonly" if readonly else "workspace:writable",
+                    "interactive-run",
+                }
+                if outer_only:
+                    required_capabilities.add("compatibility:outer-only")
                 plan = SimpleNamespace(
                     provider=provider,
                     context=context,
@@ -401,6 +407,7 @@ def check_run_invocations() -> None:
                     git_common=git_common,
                     image=cfg["images"][provider],
                     interaction_mode="interactive",
+                    required_capabilities=frozenset(required_capabilities),
                 )
                 plan_calls.append(plan)
                 return plan

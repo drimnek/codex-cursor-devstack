@@ -124,6 +124,8 @@ def test_model_validation_and_serialization() -> None:
         native_policy=True,
         native_sandbox=True,
         compatibility_modes=frozenset({"compatibility"}),
+        policy_capabilities=frozenset({"network_deny"}),
+        security_classes=frozenset({"compatibility"}),
     )
     assert capabilities.as_dict() == {
         "workspace_modes": ["readonly", "writable"],
@@ -132,6 +134,8 @@ def test_model_validation_and_serialization() -> None:
         "native_policy": True,
         "native_sandbox": True,
         "compatibility_modes": ["compatibility"],
+        "policy_capabilities": ["network_deny"],
+        "security_classes": ["compatibility"],
     }
 
     state = ProviderStateSpec("state-volume", "/root/.provider")
@@ -174,6 +178,24 @@ def test_model_validation_and_serialization() -> None:
     expect(ValueError, PolicyFileSpec, "/seed/policy", "relative/policy")
     expect(ValueError, AgentCapabilities, frozenset({"unknown"}))
     expect(ValueError, AgentCapabilities, frozenset())
+    expect(
+        ValueError,
+        AgentCapabilities,
+        frozenset({"readonly"}),
+        policy_capabilities=frozenset({"bad\ncapability"}),
+    )
+    expect(
+        ValueError,
+        AgentCapabilities,
+        frozenset({"readonly"}),
+        security_classes=frozenset({"unknown"}),
+    )
+    expect(
+        ValueError,
+        AgentCapabilities,
+        frozenset({"readonly"}),
+        security_classes=frozenset(),
+    )
 
     for value in (capabilities, state, policy, run, auth, version, install):
         assert dataclasses.is_dataclass(value)

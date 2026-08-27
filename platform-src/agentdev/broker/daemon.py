@@ -42,6 +42,7 @@ from agentdev.broker.rpc import (
 from agentdev.core.dependencies import validate_dependencies as validate_task_dependencies
 from agentdev.core.git_handoff import INTEGRATION_BRANCH
 from agentdev.core.models import TaskContext
+from agentdev.policy.capabilities import MissingCapabilitiesError, require_capabilities
 from agentdev.core.locking import (
     INTEGRATION_LOCK,
     lock_one,
@@ -979,6 +980,14 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
         reference=pp["reference"],
         git_common=git_common,
     )
+    try:
+        require_capabilities(
+            plan.required_capabilities,
+            driver.capabilities(),
+            agent_id=provider,
+        )
+    except MissingCapabilitiesError as exc:
+        raise RequestError(str(exc)) from exc
     lock_name = run_lock_name(task, rec)
     with lock_one(pp, lock_name, readonly):
         send(conn, {"type": "start", "interactive": plan.interaction_mode == "interactive"})

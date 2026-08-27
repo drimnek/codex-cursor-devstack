@@ -16,6 +16,7 @@ from agentdev.core.models import ProviderStateSpec, TaskContext
 
 
 _WORKSPACE_MODES = frozenset({"readonly", "writable"})
+_SECURITY_CLASSES = frozenset({"compatibility", "hardened"})
 
 
 def _require_text(value: str, label: str) -> str:
@@ -59,7 +60,7 @@ def _require_container_target(value: str, label: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AgentCapabilities:
-    """Provider features known before policy/capability matching is introduced."""
+    """Provider features available to generic execution/policy matching."""
 
     workspace_modes: frozenset[str]
     interactive_auth: bool = False
@@ -67,6 +68,10 @@ class AgentCapabilities:
     native_policy: bool = False
     native_sandbox: bool = False
     compatibility_modes: frozenset[str] = field(default_factory=frozenset)
+    policy_capabilities: frozenset[str] = field(default_factory=frozenset)
+    security_classes: frozenset[str] = field(
+        default_factory=lambda: frozenset({"compatibility"})
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.workspace_modes, frozenset):
@@ -83,6 +88,19 @@ class AgentCapabilities:
             raise ValueError("compatibility_modes must be a frozenset")
         for mode in self.compatibility_modes:
             _require_text(mode, "compatibility mode")
+        if not isinstance(self.policy_capabilities, frozenset):
+            raise ValueError("policy_capabilities must be a frozenset")
+        for capability in self.policy_capabilities:
+            _require_text(capability, "policy capability")
+        if not isinstance(self.security_classes, frozenset):
+            raise ValueError("security_classes must be a frozenset")
+        if not self.security_classes:
+            raise ValueError("at least one security class is required")
+        unknown_security_classes = self.security_classes - _SECURITY_CLASSES
+        if unknown_security_classes:
+            raise ValueError(
+                f"unsupported security classes: {sorted(unknown_security_classes)!r}"
+            )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -92,6 +110,8 @@ class AgentCapabilities:
             "native_policy": self.native_policy,
             "native_sandbox": self.native_sandbox,
             "compatibility_modes": sorted(self.compatibility_modes),
+            "policy_capabilities": sorted(self.policy_capabilities),
+            "security_classes": sorted(self.security_classes),
         }
 
 
