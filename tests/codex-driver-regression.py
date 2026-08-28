@@ -45,14 +45,14 @@ def test_identity_capabilities_and_installation() -> None:
 def test_state_and_policy_mount() -> None:
     driver = CodexDriver()
     assert tuple(item.as_dict() for item in driver.state_spec()) == (
-        {"source": "agent-dev-codex-state", "target": "/root/.codex", "read_only": False},
+        {"source": "agent-dev-codex-state", "target": "/home/node/.codex", "read_only": False},
     )
     adapter = driver.state_adapter()
     assert adapter.legacy_volume == "agent-dev-codex-home"
     assert adapter.primary().legacy_path == ".codex"
     assert adapter.primary().cleanup_after_copy == ("config.toml",)
     assert tuple((item.seed_relative_path, item.target, item.read_only) for item in adapter.policy_mounts) == (
-        ("config.toml", "/root/.codex/config.toml", True),
+        ("config.toml", "/home/node/.codex/config.toml", True),
     )
 
 

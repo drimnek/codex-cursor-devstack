@@ -46,6 +46,8 @@ class StateVolumeLayout:
     empty_error: str
     smoke_marker: str
     cleanup_after_copy: tuple[str, ...] = ()
+    owner_uid: int | None = None
+    owner_gid: int | None = None
 
     def __post_init__(self) -> None:
         _text(self.key, "state volume key")
@@ -61,6 +63,12 @@ class StateVolumeLayout:
             raise ValueError("cleanup_after_copy must be a tuple")
         for item in self.cleanup_after_copy:
             _relative_path(item, "cleanup path")
+        if (self.owner_uid is None) != (self.owner_gid is None):
+            raise ValueError("state owner_uid and owner_gid must be set together")
+        for name in ("owner_uid", "owner_gid"):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError(f"{name} must be a non-negative integer or None")
 
 
 @dataclass(frozen=True, slots=True)

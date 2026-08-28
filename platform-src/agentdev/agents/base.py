@@ -13,6 +13,7 @@ from typing import Any
 
 from agentdev.agents.state import ProviderStateAdapter
 from agentdev.core.models import ProviderStateSpec, TaskContext
+from agentdev.execution.isolation import RuntimeIsolationRequirements
 
 
 _WORKSPACE_MODES = frozenset({"readonly", "writable"})
@@ -165,6 +166,7 @@ class ProviderPolicyArtifacts:
     files: tuple[PolicyFileSpec, ...] = ()
     argv: tuple[str, ...] = ()
     environment: tuple[tuple[str, str], ...] = ()
+    runtime_isolation: RuntimeIsolationRequirements = field(default_factory=RuntimeIsolationRequirements)
 
     def __post_init__(self) -> None:
         if not isinstance(self.files, tuple) or not all(isinstance(item, PolicyFileSpec) for item in self.files):
@@ -177,12 +179,15 @@ class ProviderPolicyArtifacts:
         for item in self.argv:
             _require_text(item, "policy argv item")
         _require_environment(self.environment, "policy")
+        if not isinstance(self.runtime_isolation, RuntimeIsolationRequirements):
+            raise ValueError("runtime_isolation must be RuntimeIsolationRequirements")
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "files": [item.as_dict() for item in self.files],
             "argv": list(self.argv),
             "environment": [list(item) for item in self.environment],
+            "runtime_isolation": self.runtime_isolation.as_dict(),
         }
 
 
@@ -194,6 +199,7 @@ class AuthSpec:
     environment: tuple[tuple[str, str], ...] = ()
     interactive: bool = True
     timeout_seconds: int | None = None
+    runtime_isolation: RuntimeIsolationRequirements = field(default_factory=RuntimeIsolationRequirements)
 
     def __post_init__(self) -> None:
         _require_argv(self.argv, "auth")
@@ -204,6 +210,8 @@ class AuthSpec:
             type(self.timeout_seconds) is not int or self.timeout_seconds <= 0
         ):
             raise ValueError("timeout_seconds must be a positive integer or None")
+        if not isinstance(self.runtime_isolation, RuntimeIsolationRequirements):
+            raise ValueError("runtime_isolation must be RuntimeIsolationRequirements")
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -211,6 +219,7 @@ class AuthSpec:
             "environment": [list(item) for item in self.environment],
             "interactive": self.interactive,
             "timeout_seconds": self.timeout_seconds,
+            "runtime_isolation": self.runtime_isolation.as_dict(),
         }
 
 
@@ -240,6 +249,7 @@ class RunSpec:
     environment: tuple[tuple[str, str], ...] = ()
     interactive: bool = True
     policy_artifacts: ProviderPolicyArtifacts = field(default_factory=ProviderPolicyArtifacts)
+    runtime_isolation: RuntimeIsolationRequirements = field(default_factory=RuntimeIsolationRequirements)
 
     def __post_init__(self) -> None:
         _require_argv(self.argv, "run")
@@ -248,6 +258,8 @@ class RunSpec:
             raise ValueError("interactive must be boolean")
         if not isinstance(self.policy_artifacts, ProviderPolicyArtifacts):
             raise ValueError("policy_artifacts must be ProviderPolicyArtifacts")
+        if not isinstance(self.runtime_isolation, RuntimeIsolationRequirements):
+            raise ValueError("runtime_isolation must be RuntimeIsolationRequirements")
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -255,6 +267,7 @@ class RunSpec:
             "environment": [list(item) for item in self.environment],
             "interactive": self.interactive,
             "policy_artifacts": self.policy_artifacts.as_dict(),
+            "runtime_isolation": self.runtime_isolation.as_dict(),
         }
 
 

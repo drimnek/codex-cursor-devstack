@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from agentdev.execution.isolation import RuntimeIsolationRequirements
 from agentdev.execution.plan import ResolvedExecutionPlan
 from agentdev.runtime.base import RuntimeBackend, RuntimeIO, RuntimeResult
 
@@ -25,6 +26,18 @@ def environment_args(environment: tuple[tuple[str, str], ...]) -> list[str]:
     args: list[str] = []
     for name, value in environment:
         args += ["-e", f"{name}={value}"]
+    return args
+
+
+def runtime_isolation_args(requirements: RuntimeIsolationRequirements) -> list[str]:
+    """Translate provider-neutral outer-runtime isolation requirements."""
+    if not isinstance(requirements, RuntimeIsolationRequirements):
+        raise ValueError("runtime isolation must be RuntimeIsolationRequirements")
+    args: list[str] = []
+    if requirements.uid is not None:
+        args += ["--user", f"{requirements.uid}:{requirements.gid}"]
+    if requirements.nested_sandbox_bootstrap:
+        args += ["--security-opt=unmask=/proc/*"]
     return args
 
 
@@ -40,6 +53,7 @@ def execution_plan_argv(plan: ResolvedExecutionPlan) -> list[str]:
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
         "--tmpfs", "/run:rw,nosuid,nodev,size=64m",
     ]
+    args += runtime_isolation_args(plan.runtime_isolation)
     for mount in plan.all_mounts():
         args += [
             "-v",

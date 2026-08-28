@@ -12,6 +12,8 @@ from pathlib import PurePosixPath
 from typing import Any
 
 
+from agentdev.execution.isolation import RuntimeIsolationRequirements
+
 _INTERACTION_MODES = frozenset({"interactive", "noninteractive"})
 _MOUNT_ROLES = frozenset({
     "workspace",
@@ -169,6 +171,7 @@ class ResolvedExecutionPlan:
     network: NetworkRuntimeRequirements
     readonly: bool
     interaction_mode: str
+    runtime_isolation: RuntimeIsolationRequirements = field(default_factory=RuntimeIsolationRequirements)
     security_class: str | None = None
     required_capabilities: frozenset[str] = field(default_factory=frozenset)
     auxiliary_mounts: tuple[ExecutionMount, ...] = ()
@@ -207,6 +210,8 @@ class ResolvedExecutionPlan:
             raise ValueError("resource_limits must be ResourceLimits")
         if not isinstance(self.network, NetworkRuntimeRequirements):
             raise ValueError("network must be NetworkRuntimeRequirements")
+        if not isinstance(self.runtime_isolation, RuntimeIsolationRequirements):
+            raise ValueError("runtime_isolation must be RuntimeIsolationRequirements")
         if self.interaction_mode not in _INTERACTION_MODES:
             raise ValueError(f"unsupported interaction mode {self.interaction_mode!r}")
         if self.security_class is not None:
@@ -259,6 +264,7 @@ class ResolvedExecutionPlan:
             "provider_policy_artifacts": self.provider_policy_artifacts.as_dict(),
             "resource_limits": self.resource_limits.as_dict(),
             "network": self.network.as_dict(),
+            "runtime_isolation": self.runtime_isolation.as_dict(),
             "readonly": self.readonly,
             "interaction_mode": self.interaction_mode,
             "security_class": self.security_class,

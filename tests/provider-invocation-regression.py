@@ -103,9 +103,9 @@ def check_runtime_envelope() -> None:
         assert f"--network={agentd.PROVIDER_NETWORK_MODE}" not in codex_offline
 
         codex_mounts = mount_specs(codex)
-        assert "agent-dev-codex-state:/root/.codex:rw" in codex_mounts
+        assert "agent-dev-codex-state:/home/node/.codex:rw" in codex_mounts
         assert any(
-            spec.endswith(":/root/.codex/config.toml:ro")
+            spec.endswith(":/home/node/.codex/config.toml:ro")
             for spec in codex_mounts
         )
         assert "agent-dev-cursor-auth:/root/.config/cursor:rw" not in codex_mounts
@@ -114,7 +114,7 @@ def check_runtime_envelope() -> None:
         assert "agent-dev-cursor-state:/root/.cursor:rw" in cursor_mounts
         assert "agent-dev-cursor-auth:/root/.config/cursor:rw" in cursor_mounts
         assert not any(
-            spec.endswith(":/root/.codex/config.toml:ro")
+            spec.endswith(":/home/node/.codex/config.toml:ro")
             for spec in cursor_mounts
         )
 
@@ -319,7 +319,7 @@ def check_smoke_invocations() -> None:
                 if "--provider=codex" in argv
                 and "--mode=network-none" in argv
             )
-            assert "/root/.codex/.agent-dev-state-write-smoke" in codex_state[-1]
+            assert "/home/node/.codex/.agent-dev-state-write-smoke" in codex_state[-1]
             assert "/root/.config/cursor/.agent-dev-auth-write-smoke" not in codex_state[-1]
 
             cursor_state = next(

@@ -19,23 +19,34 @@ from agentdev.agents.base import (
 )
 from agentdev.agents.state import ProviderStateAdapter, StatePolicyMount, StateVolumeLayout
 from agentdev.core.models import ProviderStateSpec, TaskContext
+from agentdev.execution.isolation import RuntimeIsolationRequirements
 from agentdev.policy.capabilities import MissingCapabilitiesError, require_policy_capabilities
 from agentdev.policy.schema import ExecutionPolicy
 
 
 CODEX_POLICY_COMPILER_BASELINE = "0.147.0"
 CODEX_CREDENTIAL_PERMISSION_PROFILE = "agentdev_credential_confidentiality"
-CODEX_PROVIDER_STATE_TARGET = "/root/.codex"
+CODEX_PROVIDER_STATE_TARGET = "/home/node/.codex"
+CODEX_RUNTIME_UID = 1000
+CODEX_RUNTIME_GID = 1000
+CODEX_CONTROL_ISOLATION = RuntimeIsolationRequirements(
+    uid=CODEX_RUNTIME_UID,
+    gid=CODEX_RUNTIME_GID,
+)
+CODEX_SANDBOX_ISOLATION = RuntimeIsolationRequirements(
+    uid=CODEX_RUNTIME_UID,
+    gid=CODEX_RUNTIME_GID,
+    nested_sandbox_bootstrap=True,
+)
 
 
 def codex_credential_confidentiality_config_argv(workspace_access: str) -> tuple[str, ...]:
     """Return pinned Codex config overrides for the SEC-002 task-shell probe.
 
-    This material is intentionally not wired into normal execution yet. The
-    current deployment baseline must first prove that Codex's direct Linux
-    sandbox can enforce the denied provider-state carveout inside the outer
-    executor. Only then may SEC-002 activate it and advertise capability
-    evidence.
+    The runtime checkpoint makes the direct Linux sandbox deployable inside the
+    outer executor, but this credential-denial material remains opt-in until
+    authenticated SEC-002 T5/T6 acceptance proves the task cannot recover
+    provider state.
     """
     if workspace_access == "read":
         base_profile = ":read-only"
@@ -81,18 +92,22 @@ class CodexDriver(AgentDriver):
             volumes=(
                 StateVolumeLayout(
                     key="state",
-                    mount=ProviderStateSpec("agent-dev-codex-state", "/root/.codex"),
+                    mount=ProviderStateSpec("agent-dev-codex-state", CODEX_PROVIDER_STATE_TARGET),
                     staging_target="/state",
                     marker=".agent-dev-state-layout-v2",
                     legacy_path=".codex",
                     empty_error="provider state volume is non-empty but has no layout marker",
                     smoke_marker=".agent-dev-state-write-smoke",
                     cleanup_after_copy=("config.toml",),
+                    owner_uid=CODEX_RUNTIME_UID,
+                    owner_gid=CODEX_RUNTIME_GID,
                 ),
             ),
             legacy_volume="agent-dev-codex-home",
             policy_mounts=(
-                StatePolicyMount("config.toml", "/root/.codex/config.toml", True),
+                StatePolicyMount(
+                    "config.toml", f"{CODEX_PROVIDER_STATE_TARGET}/config.toml", True
+                ),
             ),
         )
 
@@ -133,10 +148,15 @@ class CodexDriver(AgentDriver):
             ("codex", "login", "--device-auth"),
             interactive=True,
             timeout_seconds=900,
+            runtime_isolation=CODEX_CONTROL_ISOLATION,
         )
 
     def auth_status_spec(self) -> RunSpec:
-        return RunSpec(("codex", "login", "status"), interactive=False)
+        return RunSpec(
+            ("codex", "login", "status"),
+            interactive=False,
+            runtime_isolation=CODEX_CONTROL_ISOLATION,
+        )
 
     def compile_policy(self, policy: object) -> ProviderPolicyArtifacts:
         if isinstance(policy, ExecutionPolicy):
@@ -159,8 +179,12 @@ class CodexDriver(AgentDriver):
         else:
             sandbox = "workspace-write"
 
+        runtime_isolation = (
+            CODEX_CONTROL_ISOLATION if outer_only else CODEX_SANDBOX_ISOLATION
+        )
         return ProviderPolicyArtifacts(
             argv=("--sandbox", sandbox, "-c", "approval_policy=never"),
+            runtime_isolation=runtime_isolation,
         )
 
     def _compile_execution_policy(self, policy: ExecutionPolicy) -> ProviderPolicyArtifacts:
@@ -189,9 +213,7 @@ class CodexDriver(AgentDriver):
                 raise UnsupportedCodexPolicyError(
                     "Codex read-only sandbox cannot enable task-shell network access"
                 )
-            return ProviderPolicyArtifacts(argv=tuple(argv))
-
-        if network.mode == "deny":
+        elif network.mode == "deny":
             argv += ["-c", "sandbox_workspace_write.network_access=false"]
         elif network.mode == "allow":
             argv += [
@@ -214,7 +236,15 @@ class CodexDriver(AgentDriver):
                 f"unsupported Codex task-shell network mode: {network.mode}"
             )
 
-        return ProviderPolicyArtifacts(argv=tuple(argv))
+        runtime_isolation = (
+            CODEX_SANDBOX_ISOLATION
+            if policy.sandbox.required
+            else CODEX_CONTROL_ISOLATION
+        )
+        return ProviderPolicyArtifacts(
+            argv=tuple(argv),
+            runtime_isolation=runtime_isolation,
+        )
 
     def create_run_spec(
         self,
@@ -232,4 +262,9 @@ class CodexDriver(AgentDriver):
         argv = ("codex", "exec", *policy.argv)
         if prompt.strip():
             argv += (prompt,)
-        return RunSpec(argv, interactive=True, policy_artifacts=policy)
+        return RunSpec(
+            argv,
+            interactive=True,
+            policy_artifacts=policy,
+            runtime_isolation=policy.runtime_isolation,
+        )

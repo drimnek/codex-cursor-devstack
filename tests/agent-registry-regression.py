@@ -127,7 +127,7 @@ def test_builtin_registry_is_fixed_and_fail_closed() -> None:
     codex = registry.get("codex")
     cursor = registry.get("cursor")
     assert codex.capabilities().compatibility_modes == frozenset({"outer-only"})
-    assert codex.state_spec()[0].target == "/root/.codex"
+    assert codex.state_spec()[0].target == "/home/node/.codex"
     assert codex.auth_spec().argv == ("codex", "login", "--device-auth")
     assert cursor.capabilities().compatibility_modes == frozenset()
     assert tuple(item.target for item in cursor.state_spec()) == (

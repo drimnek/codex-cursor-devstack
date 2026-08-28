@@ -19,6 +19,7 @@ from pathlib import Path, PurePosixPath
 
 from agentdev.agents.base import RunSpec
 from agentdev.agents.registry import BUILTIN_AGENT_REGISTRY, UnknownAgentError
+from agentdev.execution.isolation import RuntimeIsolationRequirements
 from agentdev.execution.plan import (
     ExecutionMount,
     NetworkRuntimeRequirements,
@@ -89,6 +90,7 @@ from agentdev.runtime.podman import (
     cleanup_interactive_container,
     environment_args as provider_environment_args,
     execution_plan_argv,
+    runtime_isolation_args,
     new_interactive_cidfile as podman_new_interactive_cidfile,
     run_interactive_argv,
     run_noninteractive_argv,
@@ -212,6 +214,22 @@ def provider_state_target(provider: str) -> str:
     return provider_state_adapter(provider).primary().mount.target
 
 
+def provider_state_smoke_isolation(provider: str) -> RuntimeIsolationRequirements | None:
+    """Use the declared writable-state owner when probing provider state writes."""
+    writable = tuple(
+        layout
+        for layout in provider_state_adapter(provider).volumes
+        if not layout.mount.read_only
+    )
+    owners = {(layout.owner_uid, layout.owner_gid) for layout in writable}
+    if owners == {(None, None)} or not owners:
+        return None
+    if len(owners) != 1 or any(value is None for value in next(iter(owners))):
+        raise ValueError("writable provider state must declare one consistent runtime owner")
+    uid, gid = next(iter(owners))
+    return RuntimeIsolationRequirements(uid=uid, gid=gid)
+
+
 def provider_seed_dir(cfg: dict, provider: str) -> Path:
     registered_provider(provider)
     root = Path(cfg["root"])
@@ -271,6 +289,41 @@ def prepare_provider_state(cfg: dict, provider: str) -> None:
         argv += ["-v", f"{legacy}:/legacy:ro"]
     argv += [image, "bash", "-lc", _migration_script(adapter)]
     subprocess.run(argv, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    for layout in adapter.volumes:
+        if layout.owner_uid is None:
+            continue
+        owner = f"{layout.owner_uid}:{layout.owner_gid}"
+        marker = f"{layout.staging_target}/.agent-dev-owner-{layout.owner_uid}-{layout.owner_gid}"
+        probe = [
+            "podman", "run", "--rm", "--network=none", "--http-proxy=false",
+            "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
+            "-v", f"{layout.mount.source}:{layout.staging_target}:ro",
+            image, "bash", "-lc",
+            f"test \"$(stat -c '%u:%g' {shlex.quote(layout.staging_target)})\" = {owner} "
+            f"&& test -e {shlex.quote(marker)}",
+        ]
+        if subprocess.run(
+            probe,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode == 0:
+            continue
+        adjust = [
+            "podman", "run", "--rm", "--network=none", "--http-proxy=false",
+            "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
+            "--user", owner,
+            "-v", f"{layout.mount.source}:{layout.staging_target}:rw,U",
+            image, "bash", "-lc",
+            f"set -eu; test \"$(stat -c '%u:%g' {shlex.quote(layout.staging_target)})\" = {owner}; "
+            f": > {shlex.quote(marker)}",
+        ]
+        subprocess.run(
+            adjust,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 
 def seed_provider_home(cfg: dict, provider: str) -> None:
@@ -333,7 +386,7 @@ def provider_policy_mounts(cfg: dict, provider: str) -> list[str]:
         ]
     return mounts
 
-def common_runtime_args(cfg: dict, provider: str | None, workspace: Path | None = None, *, readonly=False, reference: Path | None = None, task_meta: Path | None = None, git_common: Path | None = None, network_enabled: bool = True) -> list[str]:
+def common_runtime_args(cfg: dict, provider: str | None, workspace: Path | None = None, *, readonly=False, reference: Path | None = None, task_meta: Path | None = None, git_common: Path | None = None, network_enabled: bool = True, runtime_isolation=None) -> list[str]:
     platform_root = Path(cfg["root"])
     network_mode = PROVIDER_NETWORK_MODE if provider is not None and network_enabled else "none"
     args = [
@@ -341,6 +394,8 @@ def common_runtime_args(cfg: dict, provider: str | None, workspace: Path | None 
         f"--pids-limit={cfg['limits']['pids']}", f"--memory={cfg['limits']['memory']}", f"--cpus={cfg['limits']['cpus']}",
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m", "--tmpfs", "/run:rw,nosuid,nodev,size=64m",
     ]
+    if runtime_isolation is not None:
+        args += runtime_isolation_args(runtime_isolation)
     if provider is not None:
         driver = registered_provider(provider)
         for state in driver.state_spec():
@@ -475,6 +530,7 @@ def create_run_execution_plan(
             cpus=cfg["limits"]["cpus"],
         ),
         network=NetworkRuntimeRequirements(PROVIDER_NETWORK_MODE, http_proxy=False),
+        runtime_isolation=run_spec.runtime_isolation,
         readonly=readonly,
         interaction_mode="interactive" if run_spec.interactive else "noninteractive",
         security_class=None,
@@ -779,8 +835,10 @@ def op_auth(cfg: dict, conn: socket.socket, fileobj, provider: str) -> int:
     provider = valid_name(provider, "provider")
     driver = registered_provider(provider, request_error=True)
     seed_provider_home(cfg, provider)
-    runtime = common_runtime_args(cfg, provider)
     spec = driver.auth_spec()
+    runtime = common_runtime_args(
+        cfg, provider, runtime_isolation=spec.runtime_isolation
+    )
     env_args = provider_environment_args(spec.environment)
     agent_args = list(spec.argv)
     argv = [*runtime, *env_args, cfg["images"][provider], *agent_args]
@@ -806,8 +864,10 @@ def op_status(cfg: dict, conn: socket.socket) -> int:
     for provider in AGENT_REGISTRY.ids():
         driver = registered_provider(provider)
         seed_provider_home(cfg, provider)
-        runtime = common_runtime_args(cfg, provider)
         spec = driver.auth_status_spec()
+        runtime = common_runtime_args(
+            cfg, provider, runtime_isolation=spec.runtime_isolation
+        )
         env_args = provider_environment_args(spec.environment)
         agent_args = list(spec.argv)
         argv = [*runtime, *env_args, cfg["images"][provider], *agent_args]
@@ -842,7 +902,12 @@ def op_smoke(cfg: dict, conn: socket.socket) -> int:
         return rc
     for provider in AGENT_REGISTRY.ids():
         seed_provider_home(cfg, provider)
-        runtime = common_runtime_args(cfg, provider, network_enabled=False)
+        runtime = common_runtime_args(
+            cfg,
+            provider,
+            network_enabled=False,
+            runtime_isolation=provider_state_smoke_isolation(provider),
+        )
         writable_targets = provider_state_adapter(provider).writable_smoke_targets()
         scoped_writes = "".join(
             f"touch {target}/{marker}; rm -f {target}/{marker}; "

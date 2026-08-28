@@ -48,6 +48,8 @@ _configure_import_path()
 
 from agentdev.agents.codex import (
     CODEX_PROVIDER_STATE_TARGET,
+    CODEX_RUNTIME_GID,
+    CODEX_RUNTIME_UID,
     CodexDriver,
     codex_credential_confidentiality_config_argv,
 )
@@ -55,7 +57,7 @@ from agentdev.agents.codex import (
 RUN_ENV = "AGENTDEV_RUN_CODEX_CREDENTIAL_T6"
 CONFIG_ENV = "AGENTDEV_CONFIG"
 DEFAULT_CONFIG = Path("/srv/agent-dev/platform/config/platform.json")
-PROBE_TARGET = "/root/.codex/.agentdev-sec002-probe"
+PROBE_TARGET = f"{CODEX_PROVIDER_STATE_TARGET}/.agentdev-sec002-probe"
 
 
 def run(argv: list[str], *, capture: bool = False) -> subprocess.CompletedProcess[str]:
@@ -80,12 +82,14 @@ def podman_base(cfg: dict, workspace: Path, secret_file: Path, secret_token: str
     return [
         "podman", "run", "--rm", "--network=none", "--http-proxy=false",
         "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
+        "--security-opt=unmask=/proc/*",
+        "--user", f"{CODEX_RUNTIME_UID}:{CODEX_RUNTIME_GID}",
         f"--pids-limit={limits['pids']}", f"--memory={limits['memory']}",
         f"--cpus={limits['cpus']}",
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
         "--tmpfs", "/run:rw,nosuid,nodev,size=64m",
         "-v", f"{state.source}:{state.target}:rw",
-        "-v", f"{seed}:/root/.codex/config.toml:ro",
+        "-v", f"{seed}:{CODEX_PROVIDER_STATE_TARGET}/config.toml:ro",
         "-v", f"{workspace}:/workspace:rw", "-w", "/workspace",
         "-v", f"{secret_file}:{PROBE_TARGET}:ro",
         "-e", f"AGENTDEV_SEC002_SECRET_TOKEN={secret_token}",
@@ -144,7 +148,7 @@ def main() -> int:
             return 3
 
         shell_probe = r'''set -eu
-if cat /root/.codex/.agentdev-sec002-probe >/tmp/sec002-read 2>/dev/null; then
+if cat /home/node/.codex/.agentdev-sec002-probe >/tmp/sec002-read 2>/dev/null; then
     echo provider-state-sentinel-readable
     exit 41
 fi
@@ -164,7 +168,7 @@ while [ "$pid" -gt 1 ] 2>/dev/null && [ "$steps" -lt 8 ]; do
         for fd in /proc/$pid/fd/*; do
             target=$(readlink "$fd" 2>/dev/null || true)
             case "$target" in
-                /root/.codex/*) echo provider-state-fd-visible; exit 45 ;;
+                /home/node/.codex/*) echo provider-state-fd-visible; exit 45 ;;
             esac
         done
     fi

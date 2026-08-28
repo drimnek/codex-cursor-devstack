@@ -14,6 +14,8 @@ from agentdev.agents.codex import (
     CODEX_CREDENTIAL_PERMISSION_PROFILE,
     CODEX_POLICY_COMPILER_BASELINE,
     CODEX_PROVIDER_STATE_TARGET,
+    CODEX_RUNTIME_GID,
+    CODEX_RUNTIME_UID,
     CodexDriver,
     codex_credential_confidentiality_config_argv,
 )
@@ -22,7 +24,8 @@ from agentdev.agents.codex import (
 def test_pinned_permission_material() -> None:
     assert CODEX_POLICY_COMPILER_BASELINE == "0.147.0"
     assert CODEX_CREDENTIAL_PERMISSION_PROFILE == "agentdev_credential_confidentiality"
-    assert CODEX_PROVIDER_STATE_TARGET == "/root/.codex"
+    assert CODEX_PROVIDER_STATE_TARGET == "/home/node/.codex"
+    assert (CODEX_RUNTIME_UID, CODEX_RUNTIME_GID) == (1000, 1000)
 
     read = codex_credential_confidentiality_config_argv("read")
     write = codex_credential_confidentiality_config_argv("write")
@@ -32,7 +35,7 @@ def test_pinned_permission_material() -> None:
     assert 'permissions.agentdev_credential_confidentiality.extends=":workspace"' in write
     deny = (
         'permissions.agentdev_credential_confidentiality.filesystem='
-        '{ "/root/.codex" = "deny" }'
+        '{ "/home/node/.codex" = "deny" }'
     )
     assert deny in read
     assert deny in write
@@ -63,7 +66,9 @@ def test_probe_covers_required_channels() -> None:
     required_markers = (
         "codex login status",
         "codex sandbox linux",
-        "/root/.codex/.agentdev-sec002-probe",
+        "/home/node/.codex/.agentdev-sec002-probe",
+        "--security-opt=unmask=/proc/*",
+        "--user",
         "AGENTDEV_SEC002_SECRET_TOKEN",
         "/proc/$pid/environ",
         "/proc/$pid/fd",

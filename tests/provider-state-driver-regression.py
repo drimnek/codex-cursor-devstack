@@ -97,7 +97,7 @@ def test_builtin_state_metadata() -> None:
     cursor = BUILTIN_AGENT_REGISTRY.get("cursor")
 
     assert tuple(item.as_dict() for item in codex.state_spec()) == (
-        {"source": "agent-dev-codex-state", "target": "/root/.codex", "read_only": False},
+        {"source": "agent-dev-codex-state", "target": "/home/node/.codex", "read_only": False},
     )
     assert tuple(item.as_dict() for item in cursor.state_spec()) == (
         {"source": "agent-dev-cursor-state", "target": "/root/.cursor", "read_only": False},
@@ -108,8 +108,9 @@ def test_builtin_state_metadata() -> None:
     assert codex_state.legacy_volume == "agent-dev-codex-home"
     assert codex_state.primary().legacy_path == ".codex"
     assert codex_state.primary().cleanup_after_copy == ("config.toml",)
+    assert (codex_state.primary().owner_uid, codex_state.primary().owner_gid) == (1000, 1000)
     assert tuple((item.seed_relative_path, item.target, item.read_only) for item in codex_state.policy_mounts) == (
-        ("config.toml", "/root/.codex/config.toml", True),
+        ("config.toml", "/home/node/.codex/config.toml", True),
     )
 
     cursor_state = cursor.state_adapter()
@@ -177,7 +178,7 @@ def test_legacy_migration_and_reconciliation_stay_compatible() -> None:
             assert ".agent-dev-state-layout-v2" in migration[-1]
             assert "/state/config.toml" in migration[-1]
             assert agentd.provider_policy_mounts(cfg, "codex")[-1].endswith(
-                ":/root/.codex/config.toml:ro"
+                ":/home/node/.codex/config.toml:ro"
             )
 
             calls.clear()

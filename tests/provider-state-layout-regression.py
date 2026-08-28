@@ -68,9 +68,13 @@ def main() -> None:
     assert agentd.cursor_auth_volume() == "agent-dev-cursor-auth"
     assert agentd.legacy_provider_volume("codex") == "agent-dev-codex-home"
     assert agentd.legacy_provider_volume("cursor") == "agent-dev-cursor-home"
-    assert agentd.provider_state_target("codex") == "/root/.codex"
+    assert agentd.provider_state_target("codex") == "/home/node/.codex"
     assert agentd.provider_state_target("cursor") == "/root/.cursor"
     assert agentd.cursor_auth_target() == "/root/.config/cursor"
+    codex_smoke_isolation = agentd.provider_state_smoke_isolation("codex")
+    assert codex_smoke_isolation is not None
+    assert (codex_smoke_isolation.uid, codex_smoke_isolation.gid) == (1000, 1000)
+    assert agentd.provider_state_smoke_isolation("cursor") is None
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -81,13 +85,13 @@ def main() -> None:
         codex_mounts = mount_specs(codex_args)
         cursor_mounts = mount_specs(cursor_args)
 
-        assert "agent-dev-codex-state:/root/.codex:rw" in codex_mounts
+        assert "agent-dev-codex-state:/home/node/.codex:rw" in codex_mounts
         assert "agent-dev-cursor-auth:/root/.config/cursor:rw" not in codex_mounts
         assert "agent-dev-cursor-auth:/root/.config/cursor:rw" in cursor_mounts
         assert "agent-dev-cursor-state:/root/.cursor:rw" in cursor_mounts
         assert not any(spec.split(":")[1] == "/root" for spec in codex_mounts)
         assert not any(spec.split(":")[1] == "/root" for spec in cursor_mounts)
-        assert any(spec.endswith(":/root/.codex/config.toml:ro") for spec in codex_mounts)
+        assert any(spec.endswith(":/home/node/.codex/config.toml:ro") for spec in codex_mounts)
 
         calls: list[list[str]] = []
         ensured: list[str] = []
@@ -100,6 +104,8 @@ def main() -> None:
             calls.append(call)
             if call[:3] == ["podman", "volume", "exists"]:
                 return SimpleNamespace(returncode=0)
+            if "agent-dev-codex-state:/state:ro" in call and ".agent-dev-owner-1000-1000" in call[-1]:
+                return SimpleNamespace(returncode=1)
             return SimpleNamespace(returncode=0)
 
         agentd.ensure_volume = fake_ensure_volume
@@ -116,7 +122,23 @@ def main() -> None:
         codex_script = migration[-1]
         assert "/legacy/.codex/." in codex_script
         assert "rm -f /state/config.toml" in codex_script
+        assert "chown " not in codex_script
+        assert ".agent-dev-owner-1000-1000" not in codex_script
+        assert not any(item.startswith("--cap-add") for item in migration)
         assert ".agent-dev-state-layout-v2" in codex_script
+
+        ownership_probe = find_run(calls, "agent-dev-codex-state:/state:ro")
+        assert "--cap-drop=all" in ownership_probe
+        assert not any(item.startswith("--cap-add") for item in ownership_probe)
+        assert "stat -c '%u:%g' /state" in ownership_probe[-1]
+        assert ".agent-dev-owner-1000-1000" in ownership_probe[-1]
+
+        ownership_adjust = find_run(calls, "agent-dev-codex-state:/state:rw,U")
+        assert "--cap-drop=all" in ownership_adjust
+        assert not any(item.startswith("--cap-add") for item in ownership_adjust)
+        assert "--user" in ownership_adjust
+        assert ownership_adjust[ownership_adjust.index("--user") + 1] == "1000:1000"
+        assert ".agent-dev-owner-1000-1000" in ownership_adjust[-1]
         assert "non-empty but has no layout marker" in codex_script
 
         calls.clear()
@@ -126,6 +148,8 @@ def main() -> None:
         migration = find_run(calls, "agent-dev-cursor-state:/state:rw")
         assert "agent-dev-cursor-auth:/auth:rw" in migration
         assert "agent-dev-cursor-home:/legacy:ro" in migration
+        assert not any(item.startswith("--cap-add") for item in migration)
+        assert not any("agent-dev-cursor-state:/state:rw,U" in call for call in calls)
         cursor_migration_script = migration[-1]
         assert "/legacy/.cursor/." in cursor_migration_script
         assert "/legacy/.config/cursor/." in cursor_migration_script
@@ -201,7 +225,7 @@ def main() -> None:
         assert agentd.op_smoke(cfg, object()) == 0
         codex_smoke = next(
             call for call in smoke_streams
-            if "agent-dev-codex-state:/root/.codex:rw" in call
+            if "agent-dev-codex-state:/home/node/.codex:rw" in call
         )
         cursor_smoke = next(
             call for call in smoke_streams
@@ -209,8 +233,11 @@ def main() -> None:
         )
         assert "agent-dev-cursor-auth:/root/.config/cursor:rw" in cursor_smoke
         assert "/root/.config/cursor/.agent-dev-auth-write-smoke" in cursor_smoke[-1]
+        assert "--user" in codex_smoke
+        assert codex_smoke[codex_smoke.index("--user") + 1] == "1000:1000"
+        assert "--user" not in cursor_smoke
         for call, target in (
-            (codex_smoke, "/root/.codex/.agent-dev-state-write-smoke"),
+            (codex_smoke, "/home/node/.codex/.agent-dev-state-write-smoke"),
             (cursor_smoke, "/root/.cursor/.agent-dev-state-write-smoke"),
         ):
             assert "--network=none" in call

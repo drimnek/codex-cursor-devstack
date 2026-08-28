@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 -m py_compile "$ROOT/platform-src/bin/agentctl" "$ROOT/platform-src/bin/agentd" "$ROOT/platform-src/agentdev/broker/cli.py" "$ROOT/platform-src/agentdev/broker/daemon.py" "$ROOT/platform-src/agentdev/broker/rpc.py" "$ROOT/platform-src/agentdev/agents/base.py" "$ROOT/platform-src/agentdev/agents/registry.py" "$ROOT/platform-src/agentdev/agents/state.py" "$ROOT/platform-src/agentdev/core/models.py" "$ROOT/platform-src/agentdev/core/validation.py" "$ROOT/platform-src/agentdev/core/projects.py" "$ROOT/platform-src/agentdev/core/git_handoff.py" "$ROOT/platform-src/agentdev/core/tasks.py" "$ROOT/platform-src/agentdev/core/dependencies.py" "$ROOT/platform-src/agentdev/core/worktrees.py" "$ROOT/platform-src/agentdev/core/locking.py" "$ROOT/platform-src/agentdev/execution/plan.py" "$ROOT/platform-src/agentdev/policy/schema.py" "$ROOT/platform-src/agentdev/runtime/base.py" "$ROOT/platform-src/agentdev/runtime/podman.py" "$ROOT/platform-src/agentdev/broker/runtime_io.py" "$ROOT/tests/security-regression.py" "$ROOT/tests/cursor-policy-reconciliation-regression.py"
 python3 -m py_compile "$ROOT/platform-src/agentdev/policy/resolver.py" "$ROOT/platform-src/agentdev/policy/profiles.py" "$ROOT/platform-src/agentdev/policy/capabilities.py" "$ROOT/platform-src/agentdev/policy/legacy.py" "$ROOT/platform-src/agentdev/policy/serialization.py" "$ROOT/platform-src/agentdev/agents/codex.py" "$ROOT/platform-src/agentdev/agents/cursor.py" "$ROOT/tests/policy-resolver-regression.py" "$ROOT/tests/execution-profiles-regression.py" "$ROOT/tests/capability-matching-regression.py" "$ROOT/tests/legacy-run-profile-mapping-regression.py" "$ROOT/tests/codex-policy-compiler-regression.py" "$ROOT/tests/cursor-policy-compiler-regression.py" "$ROOT/tests/policy-serialization-regression.py"
+python3 -m py_compile "$ROOT/platform-src/agentdev/execution/isolation.py" "$ROOT/tests/codex-runtime-isolation-regression.py"
 find "$ROOT/platform-src" "$ROOT/tests" -type d -name __pycache__ -prune -exec rm -rf {} +
 bash -n "$ROOT/bootstrap.sh" "$ROOT/tests/git-model-smoke.sh"
 python3 - <<PY
@@ -49,6 +50,7 @@ python3 "$ROOT/tests/legacy-run-profile-mapping-regression.py"
 python3 "$ROOT/tests/policy-serialization-regression.py"
 python3 "$ROOT/tests/hardened-security-contract-regression.py"
 python3 "$ROOT/tests/codex-credential-confidentiality-regression.py"
+python3 "$ROOT/tests/codex-runtime-isolation-regression.py"
 python3 "$ROOT/tests/runtime-backend-contract-regression.py"
 python3 "$ROOT/tests/podman-backend-regression.py"
 python3 "$ROOT/tests/runtime-streaming-boundary-regression.py"

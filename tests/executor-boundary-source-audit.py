@@ -156,7 +156,7 @@ def make_fixture(tmp: Path) -> tuple[dict, Path, Path, Path, Path]:
     return cfg, workspace, reference, task_meta, git_common
 
 
-def audit_args(audit: Audit, provider: str, readonly: bool, args: list[str], workspace: Path, expected_network: str | None) -> dict:
+def audit_args(audit: Audit, provider: str, readonly: bool, args: list[str], workspace: Path, expected_network: str | None, expected_state_target: str) -> dict:
     label = f"{provider} {'RO' if readonly else 'RW'}"
     audit.require("--read-only" in args, f"{label}: rootfs read-only", "--read-only present", "--read-only missing")
     audit.require(
@@ -182,7 +182,6 @@ def audit_args(audit: Audit, provider: str, readonly: bool, args: list[str], wor
     meta = find_mount(args, "/task/metadata.json")
     audit.require(meta is not None and "ro" in mount_mode(meta).split(","), f"{label}: task metadata mode", "task metadata mounted ro", f"task metadata is not ro: {meta}")
 
-    expected_state_target = f"/root/{'.codex' if provider == 'codex' else '.cursor'}"
     root_home = find_mount(args, "/root")
     state_mount = find_mount(args, expected_state_target)
     audit.require(root_home is None, f"{label}: whole provider home exposure", "no persistent volume mounted at /root", f"unexpected whole-home mount: {root_home}")
@@ -269,6 +268,7 @@ def main() -> int:
                     audit_args(
                         audit, provider, readonly, args, workspace,
                         getattr(agentd, "PROVIDER_NETWORK_MODE", None),
+                        agentd.provider_state_target(provider),
                     )
                 )
 
@@ -278,7 +278,8 @@ def main() -> int:
         audit.require(agentd.legacy_provider_volume("cursor") == "agent-dev-cursor-home", "Cursor legacy state source", "legacy whole-home volume retained only as migration source", f"unexpected legacy volume: {agentd.legacy_provider_volume('cursor')}")
 
         codex_args = agentd.common_runtime_args(cfg, "codex", workspace, readonly=False, reference=reference, task_meta=task_meta)
-        codex_policy = find_mount(codex_args, "/root/.codex/config.toml")
+        codex_policy_target = f"{agentd.provider_state_target('codex')}/config.toml"
+        codex_policy = find_mount(codex_args, codex_policy_target)
         audit.require(codex_policy is not None and "ro" in mount_mode(codex_policy).split(","), "Codex policy mount", "Codex config policy mounted ro", f"Codex policy mount not ro: {codex_policy}")
 
         cursor_args = agentd.common_runtime_args(cfg, "cursor", workspace, readonly=False, reference=reference, task_meta=task_meta)
