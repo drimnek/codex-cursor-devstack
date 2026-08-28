@@ -1612,6 +1612,7 @@ Generic policy code contains no Cursor configuration semantics.
 ---
 
 ## MA2-POL-008 — Add Canonical Policy Serialization and Hash
+### Status: DONE
 
 Priority: **P1**
 
@@ -1631,6 +1632,13 @@ include policy schema version
 exclude transient runtime values
 produce a stable hash
 ```
+
+The implemented representation is compact UTF-8 JSON over the normalized
+`ExecutionPolicy.as_dict()` value with recursively sorted object keys and no
+formatting whitespace. The fingerprint format is `sha256:<64 lowercase hex>`
+and hashes those canonical UTF-8 bytes. Runtime/provider identity, generated
+provider artifacts, image IDs, paths, timestamps, and run metadata are excluded
+because the serializer accepts only a resolved `ExecutionPolicy`.
 
 ### Tests
 

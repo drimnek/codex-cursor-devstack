@@ -1,6 +1,6 @@
 # Modular Package Layout
 
-Status: **CORE, AgentDriver, Runtime Backend, and Policy phases implemented through MA2-POL-007**
+Status: **CORE, AgentDriver, Runtime Backend, and Policy phases implemented through MA2-POL-008**
 
 This document records the implemented Python package and compatibility-entrypoint
 boundary after the completed CORE extraction series.
@@ -22,8 +22,9 @@ and non-agent GitNexus runtime-consumer boundaries are implemented through
 `PolicyResolver`, trusted built-in execution profiles, and capability requirement
 matching and deterministic legacy run-flag/profile compatibility mapping are
 implemented through `MA2-POL-005`. `MA2-POL-006` and `MA2-POL-007` add provider-native `ExecutionPolicy`
-translation to the Codex and Cursor drivers; canonical policy serialization/hash
-is the next policy requirement.
+translation to the Codex and Cursor drivers. `MA2-POL-008` completes the Phase 4
+model with canonical policy serialization and a stable SHA-256 audit fingerprint;
+Security Closure is the next major phase.
 
 ## Current package structure
 
@@ -63,7 +64,8 @@ platform-src/
 │   │   ├── resolver.py
 │   │   ├── profiles.py
 │   │   ├── capabilities.py
-│   │   └── legacy.py
+│   │   ├── legacy.py
+│   │   └── serialization.py
 │   └── runtime/
 │       ├── __init__.py
 │       ├── base.py
@@ -84,6 +86,9 @@ profile definitions, `policy/capabilities.py` derives policy capability
 requirements and performs fail-closed matching against driver declarations, and
 `policy/legacy.py` owns the deterministic compatibility mapping from legacy
 `readonly`/`outer_only` flags to profile intent without changing the public RPC.
+`policy/serialization.py` owns compact canonical JSON serialization of resolved
+policies and the self-describing `sha256:<hex>` fingerprint used by later run
+provenance.
 
 ## Public entrypoint boundary
 
@@ -425,7 +430,7 @@ The completed CORE, AgentDriver, and Runtime Backend phases through `MA2-RT-005`
 provide the provider-neutral domain, provider, execution-plan, streaming, and
 runtime foundations while preserving GitNexus as a non-agent runtime consumer.
 
-The provider-neutral policy model and both reference-provider compilers are implemented through `MA2-POL-007`:
+The provider-neutral policy model and both reference-provider compilers are implemented through `MA2-POL-008`:
 
 ```text
 ExecutionPolicy   implemented
@@ -440,6 +445,8 @@ Codex policy compiler
                   implemented sandbox/approval/task-network translation for the pinned 0.147.0 baseline; hardened support remains uncertified
 Cursor policy compiler
                   implemented native sandbox selection for the safely representable compatibility subset; destination allowlists and hardened guarantees remain deferred
+Canonical policy identity
+                  implemented compact sorted-key JSON plus `sha256:<hex>` over the resolved provider-neutral policy only
 ```
 
 Every broker-managed agent run now checks the capability names already carried
@@ -449,6 +456,10 @@ available for the profile-based run path introduced by the following policy
 requirements. Legacy public run requests are now normalized through the policy
 compatibility adapter while retaining the frozen RPC request fields and current
 provider invocation behavior.
+
+Phase 4 is complete. The next major boundary is Security Closure (`MA2-SEC-001`),
+which turns the unresolved hardened guarantees into provider-neutral adversarial
+contracts before any driver may advertise them.
 
 The next-stage rule is:
 

@@ -61,14 +61,15 @@ execution/runtime boundary:
     GitNexus as a non-agent runtime consumer
 ```
 
-Phase 4 policy work is implemented through `MA2-POL-004`: `ExecutionPolicy`
+Phase 4 policy work is complete through `MA2-POL-008`: `ExecutionPolicy`
 provides the strict normalized provider-neutral schema, `PolicyResolver`
 provides monotonic composition of the platform baseline with sparse project,
-profile, and run restriction layers, the trusted built-in review, implement,
-dependency, and compatibility profiles are defined, and policy capability
-requirements are matched fail-closed against driver declarations. Legacy run
-flag mapping is next (`MA2-POL-005`). The existing credential-confidentiality
-and destination-level task-egress findings remain explicit later security work.
+profile, and run restriction layers, trusted built-in profiles and capability
+matching are implemented, legacy run flags map deterministically to profile
+intent, Codex/Cursor compile resolved policy into provider-native controls, and
+resolved policies have canonical serialization plus a stable SHA-256 fingerprint.
+The existing credential-confidentiality and destination-level task-egress
+findings remain explicit Phase 5 security work.
 
 
 ---
@@ -1150,13 +1151,15 @@ broker/daemon.py
 
 policy/
     owns the normalized ExecutionPolicy schema, monotonic PolicyResolver,
-    trusted built-in execution profiles, and provider-neutral capability matching
+    trusted built-in execution profiles, provider-neutral capability matching,
+    legacy compatibility mapping, and canonical policy identity
 ```
 
-`agents`, `execution`, and `runtime` are implemented subsystems. Policy work is
-implemented through `MA2-POL-004`: schema, resolver, the four built-in
-profiles, and capability matching are concrete package modules. Provider policy
-compilers, legacy mapping, and policy hashing remain later Phase 4 requirements.
+`agents`, `execution`, `runtime`, and the Phase 4 policy model are implemented
+subsystems through `MA2-POL-008`: schema, resolver, the four built-in profiles,
+capability matching, legacy compatibility mapping, both reference-provider
+compilers, and canonical policy serialization/hash are concrete package modules.
+Hardened credential and egress guarantees remain Phase 5 requirements.
 
 The broader target source tree remains:
 
@@ -1511,7 +1514,7 @@ to core executors.
 
 # Phase 4 — Provider-Neutral Policy Model
 
-Status: **In progress — MA2-POL-001 through MA2-POL-007 complete; next MA2-POL-008**
+Status: **Complete — MA2-POL-001 through MA2-POL-008**
 
 ## Objective
 
@@ -1574,11 +1577,22 @@ contract remains permissions-only, preserving Cursor-managed fields outside the
 platform-managed `permissions` object. Cursor remains compatibility-class until
 credential and egress T6 contracts pass.
 
+`MA2-POL-008` completes the provider-neutral policy identity contract. Resolved
+policies serialize as compact UTF-8 JSON over normalized policy values with
+recursively sorted object keys; the serialization includes policy schema version
+and excludes runtime/provider/transient execution data. The stable fingerprint is
+`sha256:<64 lowercase hex>` over those canonical bytes and is the policy identity
+consumed later by run provenance.
+
 ### Exit Criteria
 
-Codex and Cursor runs are requested using profiles.
+The provider-neutral schema, resolver, profiles, capability matching, legacy
+compatibility mapping, provider compilers, and canonical policy identity are
+implemented and deterministic.
 
-Provider adapters translate the same resolved policy into native enforcement mechanisms.
+Provider adapters translate the same resolved policy into native enforcement
+mechanisms. The public `--profile` CLI remains intentionally deferred to
+`MA2-CLI-004`; Phase 4 does not require changing the frozen legacy RPC surface.
 
 ---
 
@@ -1865,9 +1879,9 @@ The practical sequence is:
 10. map legacy flags                                      [complete: MA2-POL-005]
 11. compile Codex provider-native policy                   [complete: MA2-POL-006]
 12. compile Cursor provider-native policy                  [complete: MA2-POL-007]
-13. add canonical policy serialization/hash                 [next: MA2-POL-008]
+13. add canonical policy serialization/hash                 [complete: MA2-POL-008]
 
-14. close credential confidentiality
+14. close credential confidentiality                         [next: MA2-SEC-001/002/003]
 15. close task egress restriction
 
 16. introduce Run records
