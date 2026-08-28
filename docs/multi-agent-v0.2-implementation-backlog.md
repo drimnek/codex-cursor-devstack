@@ -1716,6 +1716,7 @@ provider paths in the generic test definitions.
 ---
 
 ## MA2-SEC-002 — Enforce Codex Credential Confidentiality
+### Status: IN PROGRESS — DIRECT SANDBOX PREREQUISITE MUST PASS
 
 Priority: **P0**
 
@@ -1743,6 +1744,31 @@ logs/output
 
 `outer-only` must not be advertised as satisfying this guarantee unless it
 actually does.
+
+#### Current Codex 0.147.0 runtime prerequisite
+
+The pinned Codex integration can express a custom permission profile that denies
+task-shell reads below `/root/.codex`, while environment filtering and disabled
+history persistence reduce other secret channels. That denied-read carveout
+requires Codex's direct Linux sandbox enforcement path.
+
+The frozen deployment baseline already records that nested Codex sandbox startup
+may fail inside the outer rootless-Podman executor because user-namespace
+creation is unavailable. `outer-only` therefore cannot satisfy SEC-002, and the
+legacy Landlock fallback must not be substituted for a permission profile that
+requires direct runtime enforcement.
+
+Before activating the credential policy or advertising
+`provider_state_protection`, run the opt-in, model-free prerequisite probe:
+
+```bash
+AGENTDEV_RUN_CODEX_CREDENTIAL_T6=1 \
+  tests/e2e/codex-credential-confidentiality-probe.py
+```
+
+A failed direct-sandbox prerequisite keeps SEC-002 open and requires a runtime/host
+remediation or a separate control/task process boundary. It is not permission to
+downgrade to compatibility execution.
 
 ### Tests
 

@@ -1598,7 +1598,18 @@ mechanisms. The public `--profile` CLI remains intentionally deferred to
 
 # Phase 5 — Security Closure
 
-Status: **In progress — MA2-SEC-001 complete; next MA2-SEC-002**
+Status: **In progress — MA2-SEC-001 complete; MA2-SEC-002 prerequisite validation next**
+
+The common hardened contract is implemented. For Codex credential confidentiality,
+the pinned provider can describe a denied-read provider-state carveout, but that
+policy requires the direct Linux sandbox path. The frozen deployment baseline
+records environments where the nested Codex sandbox cannot create the required
+user namespace inside the outer executor. Such environments must fail closed:
+neither `outer-only` nor a legacy sandbox fallback may be counted as credential
+confidentiality.
+
+The SEC-002 prerequisite probe therefore verifies the direct sandbox primitive
+before provider-state protection is activated or advertised.
 
 ## Objective
 

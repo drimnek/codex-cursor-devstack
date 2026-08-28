@@ -399,6 +399,14 @@ The executor security audit is expected to remain behaviorally stable during
 this structural stage. A change in its PASS/WARN/FAIL findings should be
 reviewed rather than accepted as an incidental refactor result.
 
+Security Closure now also includes a provider-specific Codex SEC-002 prerequisite
+probe under `tests/e2e/`. The deterministic package suite validates the probe
+contract and the generated credential-confidentiality configuration material,
+but the live probe itself remains opt-in because it requires a deployed Codex
+image and authenticated provider state. A passing prerequisite does not by
+itself advertise `provider_state_protection`; authenticated T5/T6 evidence is
+still required.
+
 ## Deployment requirement
 
 Deployment must install the complete `platform-src/agentdev` package together

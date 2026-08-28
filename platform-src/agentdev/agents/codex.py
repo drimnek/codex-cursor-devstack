@@ -24,6 +24,41 @@ from agentdev.policy.schema import ExecutionPolicy
 
 
 CODEX_POLICY_COMPILER_BASELINE = "0.147.0"
+CODEX_CREDENTIAL_PERMISSION_PROFILE = "agentdev_credential_confidentiality"
+CODEX_PROVIDER_STATE_TARGET = "/root/.codex"
+
+
+def codex_credential_confidentiality_config_argv(workspace_access: str) -> tuple[str, ...]:
+    """Return pinned Codex config overrides for the SEC-002 task-shell probe.
+
+    This material is intentionally not wired into normal execution yet. The
+    current deployment baseline must first prove that Codex's direct Linux
+    sandbox can enforce the denied provider-state carveout inside the outer
+    executor. Only then may SEC-002 activate it and advertise capability
+    evidence.
+    """
+    if workspace_access == "read":
+        base_profile = ":read-only"
+    elif workspace_access == "write":
+        base_profile = ":workspace"
+    else:
+        raise ValueError("Codex credential probe workspace access must be read or write")
+
+    profile = CODEX_CREDENTIAL_PERMISSION_PROFILE
+    return (
+        "-c",
+        f'default_permissions="{profile}"',
+        "-c",
+        f'permissions.{profile}.extends="{base_profile}"',
+        "-c",
+        f'permissions.{profile}.filesystem={{ "{CODEX_PROVIDER_STATE_TARGET}" = "deny" }}',
+        "-c",
+        'shell_environment_policy.inherit="all"',
+        "-c",
+        "shell_environment_policy.ignore_default_excludes=false",
+        "-c",
+        'history.persistence="none"',
+    )
 
 
 class UnsupportedCodexPolicyError(ValueError):
