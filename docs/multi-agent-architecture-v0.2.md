@@ -1598,6 +1598,8 @@ mechanisms. The public `--profile` CLI remains intentionally deferred to
 
 # Phase 5 — Security Closure
 
+Status: **In progress — MA2-SEC-001 complete; next MA2-SEC-002**
+
 ## Objective
 
 Close the two remaining execution-boundary gaps:
@@ -1647,6 +1649,14 @@ destination allowlist
 ```
 
 Provider control-plane connectivity remains separate.
+
+`MA2-SEC-001` establishes the common adversarial acceptance vocabulary before
+provider enforcement changes begin. The reusable contract defines observable
+review/implement/dependency expectations for workspace access, tests, Git commit,
+human-checkout isolation, host/provider credential isolation, external filesystem
+writes, runtime-socket access, arbitrary Internet access, and private/loopback/
+metadata destinations. Provider-specific adapters supply observations; the generic
+contract contains no provider paths or native configuration semantics.
 
 ### Exit Criteria
 

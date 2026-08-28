@@ -1663,6 +1663,7 @@ This epic must use adversarial runtime testing.
 ---
 
 ## MA2-SEC-001 — Define Provider-Neutral Hardened Security Contract
+### Status: DONE
 
 Priority: **P0**
 
@@ -1693,6 +1694,13 @@ CANNOT access private/loopback/metadata destinations
 ```
 
 Separate profile-specific expectations.
+
+The implemented common harness lives under `tests/contracts/` and defines only
+observable probe identifiers and allow/deny expectations. It contains no Codex,
+Cursor, provider-state path, CLI, Podman, or native-sandbox knowledge. Review,
+implement, and dependency each receive an explicit hardened contract;
+compatibility is rejected as a hardened contract. Missing probe observations fail
+closed. Provider/runtime-specific T6 adapters are added by the later SEC cases.
 
 ### Tests
 

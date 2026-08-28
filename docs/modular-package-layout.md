@@ -388,6 +388,7 @@ tests/dependency-semantics-regression.py
 tests/parallel-lifecycle-regression.py
 tests/locking-concurrency-regression.py
 tests/executor-security-baseline.py
+tests/hardened-security-contract-regression.py
 ```
 
 Source-level tests must follow implementation ownership rather than assuming
@@ -457,9 +458,11 @@ requirements. Legacy public run requests are now normalized through the policy
 compatibility adapter while retaining the frozen RPC request fields and current
 provider invocation behavior.
 
-Phase 4 is complete. The next major boundary is Security Closure (`MA2-SEC-001`),
-which turns the unresolved hardened guarantees into provider-neutral adversarial
-contracts before any driver may advertise them.
+Phase 4 is complete. Security Closure is now in progress: `MA2-SEC-001` defines
+the provider-neutral hardened adversarial contract under `tests/contracts/` and
+unit-tests it with a fake result adapter. The next requirement is `MA2-SEC-002`,
+which applies that common contract to Codex credential confidentiality without
+changing the generic expectations.
 
 The next-stage rule is:
 
