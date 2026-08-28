@@ -103,7 +103,7 @@ else
   set -e
   case "$AUDIT_RC" in
     0) pass "deployed executor source audit has no WARN/FAIL" ;;
-    2) warn "deployed executor source audit has reviewable warnings" ;;
+    2) warn "component status: deployed executor source audit PASS WITH WARNINGS (see component summary above)" ;;
     *) fail "deployed executor source audit rc=$AUDIT_RC" ;;
   esac
 fi
@@ -121,7 +121,8 @@ else
 fi
 
 section "Audit result"
-printf 'SUMMARY FAIL=%d WARN=%d\n' "$FAIL" "$WARN"
+# Leaf audits own their numeric finding counts. This wrapper reports only
+# component/overall status.
 if (( FAIL != 0 )); then
   echo "EXECUTOR BOUNDARY AUDIT: FAIL"
   exit 1
