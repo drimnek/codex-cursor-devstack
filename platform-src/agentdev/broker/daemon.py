@@ -43,6 +43,7 @@ from agentdev.core.dependencies import validate_dependencies as validate_task_de
 from agentdev.core.git_handoff import INTEGRATION_BRANCH
 from agentdev.core.models import TaskContext
 from agentdev.policy.capabilities import MissingCapabilitiesError, require_capabilities
+from agentdev.policy.legacy import resolve_run_profile_request
 from agentdev.core.locking import (
     INTEGRATION_LOCK,
     lock_one,
@@ -945,8 +946,12 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
     driver = registered_provider(provider, request_error=True)
     project = valid_name(req.get("project"), "project")
     task = valid_name(req.get("task"), "task")
-    readonly = bool(req.get("readonly", False))
-    outer_only = bool(req.get("outer_only", False))
+    legacy_mapping = resolve_run_profile_request(
+        readonly=bool(req.get("readonly", False)),
+        outer_only=bool(req.get("outer_only", False)),
+    )
+    readonly = legacy_mapping.readonly
+    outer_only = legacy_mapping.outer_only
     prompt = req.get("prompt", "")
     if not isinstance(prompt, str) or len(prompt) > 100_000:
         raise RequestError("prompt must be a string <= 100000 characters")

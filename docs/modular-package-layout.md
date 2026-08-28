@@ -1,6 +1,6 @@
 # Modular Package Layout
 
-Status: **CORE, AgentDriver, Runtime Backend, and Policy phases implemented through MA2-POL-004**
+Status: **CORE, AgentDriver, Runtime Backend, and Policy phases implemented through MA2-POL-005**
 
 This document records the implemented Python package and compatibility-entrypoint
 boundary after the completed CORE extraction series.
@@ -20,7 +20,8 @@ The resolved execution-plan, Podman runtime-backend, streaming/process-control,
 and non-agent GitNexus runtime-consumer boundaries are implemented through
 `MA2-RT-005`. The provider-neutral `ExecutionPolicy` schema, monotonic
 `PolicyResolver`, trusted built-in execution profiles, and capability requirement
-matching are implemented through `MA2-POL-004`; legacy flag mapping is the next
+matching and deterministic legacy run-flag/profile compatibility mapping are
+implemented through `MA2-POL-005`; provider-native policy compilation is the next
 policy requirement.
 
 ## Current package structure
@@ -60,7 +61,8 @@ platform-src/
 │   │   ├── schema.py
 │   │   ├── resolver.py
 │   │   ├── profiles.py
-│   │   └── capabilities.py
+│   │   ├── capabilities.py
+│   │   └── legacy.py
 │   └── runtime/
 │       ├── __init__.py
 │       ├── base.py
@@ -77,8 +79,10 @@ contains the provider-neutral backend contract and concrete `PodmanBackend`.
 `policy/schema.py` owns the strict normalized `ExecutionPolicy` model,
 `policy/resolver.py` owns monotonic platform/project/profile/run composition,
 `policy/profiles.py` owns the trusted built-in review/implement/dependency/compatibility
-profile definitions, and `policy/capabilities.py` derives policy capability
-requirements and performs fail-closed matching against driver declarations.
+profile definitions, `policy/capabilities.py` derives policy capability
+requirements and performs fail-closed matching against driver declarations, and
+`policy/legacy.py` owns the deterministic compatibility mapping from legacy
+`readonly`/`outer_only` flags to profile intent without changing the public RPC.
 
 ## Public entrypoint boundary
 
@@ -361,6 +365,7 @@ tests/execution-policy-schema-regression.py
 tests/policy-resolver-regression.py
 tests/execution-profiles-regression.py
 tests/capability-matching-regression.py
+tests/legacy-run-profile-mapping-regression.py
 tests/runtime-backend-contract-regression.py
 tests/podman-backend-regression.py
 tests/runtime-streaming-boundary-regression.py
@@ -419,7 +424,7 @@ The completed CORE, AgentDriver, and Runtime Backend phases through `MA2-RT-005`
 provide the provider-neutral domain, provider, execution-plan, streaming, and
 runtime foundations while preserving GitNexus as a non-agent runtime consumer.
 
-The provider-neutral policy model is implemented through `MA2-POL-004`:
+The provider-neutral policy model is implemented through `MA2-POL-005`:
 
 ```text
 ExecutionPolicy   implemented
@@ -428,13 +433,17 @@ ExecutionProfile  implemented built-ins: review/implement/dependency/compatibili
 SecurityClass     represented in ExecutionPolicy and matched against driver support
 CapabilityRequirement
                   implemented policy derivation + fail-closed matching
+Legacy run mapping
+                  implemented readonly/review, writable/implement, and outer-only compatibility semantics
 ```
 
 Every broker-managed agent run now checks the capability names already carried
 by `ResolvedExecutionPlan.required_capabilities` against the selected driver's
 `AgentCapabilities` before runtime execution. Policy-derived capability sets are
 available for the profile-based run path introduced by the following policy
-requirements.
+requirements. Legacy public run requests are now normalized through the policy
+compatibility adapter while retaining the frozen RPC request fields and current
+provider invocation behavior.
 
 The next-stage rule is:
 

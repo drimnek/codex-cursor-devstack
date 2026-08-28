@@ -1475,6 +1475,7 @@ Every run is capability-checked before runtime plan execution.
 ---
 
 ## MA2-POL-005 — Map Legacy Run Flags to Profiles
+### Status: DONE
 
 Priority: **P1**
 
@@ -1493,10 +1494,17 @@ readonly
 outer_only
 ```
 
-The mapping must be documented and deterministic.
+The mapping must be documented and deterministic. Legacy `readonly=true` selects
+review intent while writable legacy execution selects implement intent. Existing
+legacy runs remain compatibility-class during migration, and `outer_only` remains
+an orthogonal provider compatibility modifier so the existing read-only +
+outer-only combination stays valid.
 
-A direct profile request and legacy aliases with contradictory semantics must be
-rejected rather than ambiguously merged.
+The compatibility adapter also accepts a direct profile identifier for reuse by
+the later profile-based CLI. Equivalent aliases are accepted deterministically; a
+direct profile request and legacy aliases with contradictory workspace semantics
+are rejected rather than ambiguously merged. POL-005 does not add a public
+`profile` RPC field or CLI option; that interface remains MA2-CLI-004.
 
 ### Tests
 

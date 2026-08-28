@@ -1511,7 +1511,7 @@ to core executors.
 
 # Phase 4 — Provider-Neutral Policy Model
 
-Status: **In progress — MA2-POL-001 through MA2-POL-004 complete; next MA2-POL-005**
+Status: **In progress — MA2-POL-001 through MA2-POL-005 complete; next MA2-POL-006**
 
 ## Objective
 
@@ -1547,7 +1547,14 @@ Map legacy options:
 
 to compatibility aliases where necessary.
 
-Do not immediately remove them.
+The implemented compatibility adapter keeps the existing public CLI/RPC shape
+unchanged: `readonly` selects review versus implement intent, all legacy runs
+remain compatibility-class until hardened policy enforcement is certified, and
+`outer_only` remains an orthogonal provider compatibility modifier. The adapter
+also defines deterministic conflict handling for a future direct profile request,
+but the public `--profile` interface remains deferred to MA2-CLI-004.
+
+Do not immediately remove the legacy flags.
 
 ### Exit Criteria
 
@@ -1837,8 +1844,8 @@ The practical sequence is:
 7. add monotonic PolicyResolver                          [complete: MA2-POL-002]
 8. add built-in profiles                                 [complete: MA2-POL-003]
 9. add capability checks                                  [complete: MA2-POL-004]
-10. map legacy flags                                      [next: MA2-POL-005]
-11. compile provider-native policy
+10. map legacy flags                                      [complete: MA2-POL-005]
+11. compile provider-native policy                         [next: MA2-POL-006]
 12. add canonical policy serialization/hash
 
 13. close credential confidentiality
