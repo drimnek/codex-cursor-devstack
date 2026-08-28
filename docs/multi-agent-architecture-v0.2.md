@@ -1598,18 +1598,29 @@ mechanisms. The public `--profile` CLI remains intentionally deferred to
 
 # Phase 5 — Security Closure
 
-Status: **In progress — MA2-SEC-001 complete; MA2-SEC-002 prerequisite validation next**
+Status: **In progress — MA2-SEC-001 complete; MA2-SEC-002 control/task boundary correction active**
 
-The common hardened contract is implemented. For Codex credential confidentiality,
-the pinned provider can describe a denied-read provider-state carveout, but that
-policy requires the direct Linux sandbox path. The frozen deployment baseline
-records environments where the nested Codex sandbox cannot create the required
-user namespace inside the outer executor. Such environments must fail closed:
-neither `outer-only` nor a legacy sandbox fallback may be counted as credential
-confidentiality.
+The common hardened contract is implemented. SEC-002 now makes explicit a trust
+boundary that the v0.1 executor did not need to distinguish: the outer provider
+control process is a trusted platform component, while model-generated task
+commands are untrusted execution. The outer executor remains a defense-in-depth
+boundary around the provider, but hardened credential confidentiality is judged
+at the inner task boundary.
 
-The SEC-002 prerequisite probe therefore verifies the direct sandbox primitive
-before provider-state protection is activated or advertised.
+The deployed Codex prerequisite investigation proved that host user namespaces,
+rootless subordinate mappings, nested user namespaces, and Bubblewrap can work
+without granting outer Linux capabilities when the Codex control process runs as
+a non-root container user. The remaining bootstrap conflict came from Podman's
+default `/proc` masking: a diagnostic `unmask=/proc/*` allowed a fresh nested
+procfs and Bubblewrap startup. This is feasibility evidence only, not an accepted
+runtime exception.
+
+Any outer procfs relaxation required solely to construct a nested sandbox must be
+scoped as a sandbox-bootstrap mechanism, must not redefine host/system-information
+exposure as allowed task behavior, and must be followed by a fresh task-local PID
+namespace/procfs. The task must not be able to inspect or traverse the trusted
+control process through `/proc`. Neither `outer-only` nor a legacy sandbox fallback
+may be counted as credential confidentiality.
 
 ## Objective
 
@@ -1645,6 +1656,30 @@ generated configuration
 logs
 ```
 
+### Control-plane and task procfs boundary
+
+For hardened execution, distinguish the trusted provider control process from the
+untrusted task subprocess. The control process may use the minimum kernel/runtime
+interfaces required to construct the provider-native sandbox, but those bootstrap
+interfaces are not automatically task capabilities.
+
+The inner task must receive task-local process visibility only. T6 must prove that
+it cannot retrieve or traverse control-process state through at least:
+
+```text
+/proc/<control-pid>/environ
+/proc/<control-pid>/cmdline
+/proc/<control-pid>/fd/*
+/proc/<control-pid>/root and /proc/<control-pid>/cwd
+/proc/<control-pid>/mem where the kernel exposes the path
+```
+
+Default outer procfs masking remains a defense-in-depth baseline for executors that
+do not require nested sandbox bootstrap. A backend-specific bootstrap exception is
+acceptable only when it is minimal, provider-neutral at the execution-plan boundary,
+and the inner adversarial contract proves that the relaxed outer procfs is not
+observable as a control-plane escape path.
+
 ## Network Work
 
 Enforce:
@@ -1665,9 +1700,10 @@ Provider control-plane connectivity remains separate.
 provider enforcement changes begin. The reusable contract defines observable
 review/implement/dependency expectations for workspace access, tests, Git commit,
 human-checkout isolation, host/provider credential isolation, external filesystem
-writes, runtime-socket access, arbitrary Internet access, and private/loopback/
-metadata destinations. Provider-specific adapters supply observations; the generic
-contract contains no provider paths or native configuration semantics.
+writes, runtime-socket access, arbitrary Internet access, private/loopback/
+metadata destinations, and control-process procfs inspection/traversal channels.
+Provider-specific adapters supply observations; the generic contract contains no
+provider paths or native configuration semantics.
 
 ### Exit Criteria
 

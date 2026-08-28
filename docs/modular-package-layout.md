@@ -407,6 +407,16 @@ image and authenticated provider state. A passing prerequisite does not by
 itself advertise `provider_state_protection`; authenticated T5/T6 evidence is
 still required.
 
+SEC-002 also clarifies the executor trust layers. The outer provider process is a
+trusted control compartment; model-generated commands are untrusted task
+execution. Runtime support for provider-native nested sandboxes must therefore be
+expressed as provider-neutral execution-plan requirements rather than provider-ID
+branches in `PodmanBackend`. If a backend needs a minimal outer procfs bootstrap
+exception, the inner sandbox must replace it with task-local PID/procfs visibility,
+and T6 must prove that control-process `/proc` state is not reachable from the task.
+The existing outer procfs masks remain the default defense-in-depth posture when
+nested sandbox bootstrap is not required.
+
 ## Deployment requirement
 
 Deployment must install the complete `platform-src/agentdev` package together

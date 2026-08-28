@@ -1687,6 +1687,7 @@ CAN commit when profile permits
 CANNOT read human checkout
 CANNOT read host credentials
 CANNOT read provider auth/session credentials
+CANNOT inspect/traverse trusted control-process state through procfs
 CANNOT write outside allowed filesystem
 CANNOT access runtime socket
 CANNOT access arbitrary task-shell Internet
@@ -1700,7 +1701,10 @@ observable probe identifiers and allow/deny expectations. It contains no Codex,
 Cursor, provider-state path, CLI, Podman, or native-sandbox knowledge. Review,
 implement, and dependency each receive an explicit hardened contract;
 compatibility is rejected as a hardened contract. Missing probe observations fail
-closed. Provider/runtime-specific T6 adapters are added by the later SEC cases.
+closed. The common contract also denies control-process `environ`, `cmdline`,
+file-descriptor, filesystem-traversal, and memory-read channels without embedding
+provider-specific PID/path knowledge. Provider/runtime-specific T6 adapters are
+added by the later SEC cases.
 
 ### Tests
 
@@ -1716,7 +1720,7 @@ provider paths in the generic test definitions.
 ---
 
 ## MA2-SEC-002 — Enforce Codex Credential Confidentiality
-### Status: IN PROGRESS — DIRECT SANDBOX PREREQUISITE MUST PASS
+### Status: IN PROGRESS — NESTED SANDBOX PRIMITIVE PROVEN; CONTROL/TASK PROC BOUNDARY NEXT
 
 Priority: **P0**
 
@@ -1740,7 +1744,20 @@ inherited descriptors where relevant
 provider state
 generated configuration
 logs/output
+control-process procfs inspection/traversal
 ```
+
+The hardened trust model distinguishes the outer provider control process from the
+model-generated task subprocess. The outer control process is a trusted platform
+component that may retain provider authentication state and the minimum runtime
+interfaces needed to construct an inner sandbox. The task subprocess is the
+untrusted boundary to which CAN/CANNOT security expectations apply.
+
+This distinction does not make broad system-information exposure acceptable.
+Default outer procfs masking remains defense in depth unless a nested-sandbox
+backend proves that a narrower bootstrap exception is required. Any such exception
+must terminate at the inner boundary: the task gets a fresh PID namespace/procfs
+and must not inspect or traverse the outer control process.
 
 `outer-only` must not be advertised as satisfying this guarantee unless it
 actually does.
@@ -1752,9 +1769,19 @@ task-shell reads below `/root/.codex`, while environment filtering and disabled
 history persistence reduce other secret channels. That denied-read carveout
 requires Codex's direct Linux sandbox enforcement path.
 
-The frozen deployment baseline already records that nested Codex sandbox startup
-may fail inside the outer rootless-Podman executor because user-namespace
-creation is unavailable. `outer-only` therefore cannot satisfy SEC-002, and the
+The deployed prerequisite investigation narrowed the runtime condition more
+precisely. Host user namespaces and `agentdev` subordinate UID/GID mappings work.
+A non-root Codex control process inside the rootless-Podman executor can also
+create a nested user namespace with no outer Linux capabilities. The default
+Podman `/proc` masking prevents the nested sandbox from mounting its fresh procfs;
+a diagnostic `unmask=/proc/*` permits both nested `--mount-proc` and Bubblewrap
+startup while `--cap-drop=all` and `no-new-privileges` remain active.
+
+That result proves the nested sandbox primitive is feasible but does not yet make
+procfs unmasking an accepted production setting. Before activation, the runtime
+model must represent nested-sandbox bootstrap without provider-specific branches,
+and T6 must prove that the inner task cannot observe the trusted control process
+through the relaxed outer procfs. `outer-only` cannot satisfy SEC-002, and the
 legacy Landlock fallback must not be substituted for a permission profile that
 requires direct runtime enforcement.
 
@@ -1775,6 +1802,10 @@ downgrade to compatibility execution.
 - T1/T2 adapter tests.
 - T5 authenticated Codex run.
 - T6 adversarial task attempts against every relevant secret channel.
+- T6 control-process procfs attempts: `environ`, `cmdline`, `fd`, `root`/`cwd`,
+  and `mem` where applicable.
+- verify the inner task sees only task-local process state and cannot traverse to
+  the outer provider control compartment.
 - verify authentication still works.
 - T3.
 

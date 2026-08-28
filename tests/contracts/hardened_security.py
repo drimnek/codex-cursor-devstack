@@ -3,7 +3,9 @@
 This module defines observable acceptance probes only. It does not know provider
 state paths, provider CLI syntax, Podman arguments, or native sandbox formats.
 Provider-specific T6 adapters execute the probes and return observations through
-``SecurityResultAdapter``.
+``SecurityResultAdapter``. The trusted provider control process is distinct from
+the untrusted task boundary; hardened tasks must not inspect or traverse control
+process state through procfs-derived channels.
 """
 from __future__ import annotations
 
@@ -23,6 +25,11 @@ PROBE_GIT_COMMIT = "git.commit"
 PROBE_HUMAN_CHECKOUT_READ = "human_checkout.read"
 PROBE_HOST_CREDENTIALS_READ = "host_credentials.read"
 PROBE_PROVIDER_AUTH_READ = "provider_auth.read"
+PROBE_CONTROL_PROCESS_ENVIRON_READ = "control_process.environ.read"
+PROBE_CONTROL_PROCESS_CMDLINE_READ = "control_process.cmdline.read"
+PROBE_CONTROL_PROCESS_FD_ACCESS = "control_process.fd.access"
+PROBE_CONTROL_PROCESS_FS_TRAVERSE = "control_process.fs_traverse"
+PROBE_CONTROL_PROCESS_MEMORY_READ = "control_process.memory.read"
 PROBE_EXTERNAL_FILESYSTEM_WRITE = "filesystem.external_write"
 PROBE_RUNTIME_SOCKET_ACCESS = "runtime_socket.access"
 PROBE_ARBITRARY_INTERNET = "network.arbitrary_internet"
@@ -38,6 +45,11 @@ ALL_PROBES = (
     PROBE_HUMAN_CHECKOUT_READ,
     PROBE_HOST_CREDENTIALS_READ,
     PROBE_PROVIDER_AUTH_READ,
+    PROBE_CONTROL_PROCESS_ENVIRON_READ,
+    PROBE_CONTROL_PROCESS_CMDLINE_READ,
+    PROBE_CONTROL_PROCESS_FD_ACCESS,
+    PROBE_CONTROL_PROCESS_FS_TRAVERSE,
+    PROBE_CONTROL_PROCESS_MEMORY_READ,
     PROBE_EXTERNAL_FILESYSTEM_WRITE,
     PROBE_RUNTIME_SOCKET_ACCESS,
     PROBE_ARBITRARY_INTERNET,
@@ -129,6 +141,11 @@ def hardened_security_contract(profile: str) -> HardenedSecurityContract:
         PROBE_HUMAN_CHECKOUT_READ: False,
         PROBE_HOST_CREDENTIALS_READ: False,
         PROBE_PROVIDER_AUTH_READ: False,
+        PROBE_CONTROL_PROCESS_ENVIRON_READ: False,
+        PROBE_CONTROL_PROCESS_CMDLINE_READ: False,
+        PROBE_CONTROL_PROCESS_FD_ACCESS: False,
+        PROBE_CONTROL_PROCESS_FS_TRAVERSE: False,
+        PROBE_CONTROL_PROCESS_MEMORY_READ: False,
         PROBE_EXTERNAL_FILESYSTEM_WRITE: False,
         PROBE_RUNTIME_SOCKET_ACCESS: False,
         PROBE_ARBITRARY_INTERNET: False,

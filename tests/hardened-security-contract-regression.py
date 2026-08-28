@@ -11,6 +11,11 @@ sys.path.insert(0, str(ROOT / "tests"))
 from contracts.hardened_security import (
     ALL_PROBES,
     PROBE_ARBITRARY_INTERNET,
+    PROBE_CONTROL_PROCESS_CMDLINE_READ,
+    PROBE_CONTROL_PROCESS_ENVIRON_READ,
+    PROBE_CONTROL_PROCESS_FD_ACCESS,
+    PROBE_CONTROL_PROCESS_FS_TRAVERSE,
+    PROBE_CONTROL_PROCESS_MEMORY_READ,
     PROBE_EXTERNAL_FILESYSTEM_WRITE,
     PROBE_GIT_COMMIT,
     PROBE_HOST_CREDENTIALS_READ,
@@ -66,6 +71,11 @@ def test_profile_expectations() -> None:
             PROBE_HUMAN_CHECKOUT_READ,
             PROBE_HOST_CREDENTIALS_READ,
             PROBE_PROVIDER_AUTH_READ,
+            PROBE_CONTROL_PROCESS_ENVIRON_READ,
+            PROBE_CONTROL_PROCESS_CMDLINE_READ,
+            PROBE_CONTROL_PROCESS_FD_ACCESS,
+            PROBE_CONTROL_PROCESS_FS_TRAVERSE,
+            PROBE_CONTROL_PROCESS_MEMORY_READ,
             PROBE_EXTERNAL_FILESYSTEM_WRITE,
             PROBE_RUNTIME_SOCKET_ACCESS,
             PROBE_ARBITRARY_INTERNET,
@@ -81,6 +91,19 @@ def test_profile_expectations() -> None:
     assert implement[PROBE_GIT_COMMIT] is True
     assert dependency[PROBE_WORKSPACE_WRITE] is True
     assert dependency[PROBE_GIT_COMMIT] is True
+
+
+def test_control_process_procfs_channels_are_explicitly_denied() -> None:
+    expected = expectation_map("implement")
+    procfs_probes = (
+        PROBE_CONTROL_PROCESS_ENVIRON_READ,
+        PROBE_CONTROL_PROCESS_CMDLINE_READ,
+        PROBE_CONTROL_PROCESS_FD_ACCESS,
+        PROBE_CONTROL_PROCESS_FS_TRAVERSE,
+        PROBE_CONTROL_PROCESS_MEMORY_READ,
+    )
+    assert all(expected[probe] is False for probe in procfs_probes)
+    assert all(probe in ALL_PROBES for probe in procfs_probes)
 
 
 def test_fake_adapter_passes_every_profile() -> None:
@@ -160,6 +183,7 @@ def test_generic_contract_contains_no_provider_identity_or_paths() -> None:
 
 def main() -> None:
     test_profile_expectations()
+    test_control_process_procfs_channels_are_explicitly_denied()
     test_fake_adapter_passes_every_profile()
     test_forbidden_success_is_reported()
     test_required_capability_failure_is_reported()
