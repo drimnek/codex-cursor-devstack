@@ -44,7 +44,7 @@ def test_identity_capabilities_and_installation() -> None:
     assert caps.interactive_auth
     assert caps.interactive_run
     assert caps.native_policy
-    assert not caps.native_sandbox
+    assert caps.native_sandbox
     assert caps.compatibility_modes == frozenset()
     installation = driver.installation_spec()
     assert installation.image_key == "cursor"

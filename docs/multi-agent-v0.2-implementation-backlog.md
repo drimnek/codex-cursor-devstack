@@ -1566,6 +1566,7 @@ Generic policy code contains no Codex configuration semantics.
 ---
 
 ## MA2-POL-007 — Implement Cursor Policy Compiler
+### Status: DONE
 
 Priority: **P0**
 
@@ -1587,6 +1588,13 @@ Cursor-managed mutable fields
 ```
 
 Extend reconciliation only for fields explicitly declared platform-managed.
+The current implementation keeps `cli-config.json` reconciliation restricted to
+the `permissions` object and preserves Cursor-managed fields outside it. Resolved
+policies use Cursor's documented `--sandbox enabled|disabled` control only for
+combinations that can be represented without inventing unverified semantics.
+Per-run destination allowlists remain fail-closed and are completed by
+MA2-SEC-007; this requirement does not advertise hardened egress or credential
+confidentiality.
 
 ### Tests
 

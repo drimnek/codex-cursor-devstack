@@ -18,6 +18,12 @@ from agentdev.agents.base import (
 )
 from agentdev.agents.state import JsonFieldReconciliation, ProviderStateAdapter, StateVolumeLayout
 from agentdev.core.models import ProviderStateSpec, TaskContext
+from agentdev.policy.capabilities import MissingCapabilitiesError, require_policy_capabilities
+from agentdev.policy.schema import ExecutionPolicy
+
+
+class UnsupportedCursorPolicyError(ValueError):
+    """Raised when current Cursor policy controls cannot represent a policy safely."""
 
 
 class CursorDriver(AgentDriver):
@@ -66,7 +72,7 @@ class CursorDriver(AgentDriver):
             interactive_auth=True,
             interactive_run=True,
             native_policy=True,
-            native_sandbox=False,
+            native_sandbox=True,
         )
 
     def state_spec(self) -> tuple[ProviderStateSpec, ...]:
@@ -96,8 +102,14 @@ class CursorDriver(AgentDriver):
         return RunSpec(("agent", "status"), interactive=False)
 
     def compile_policy(self, policy: object) -> ProviderPolicyArtifacts:
+        if isinstance(policy, ExecutionPolicy):
+            return self._compile_execution_policy(policy)
         if not isinstance(policy, dict):
-            raise ValueError("Cursor run policy must be a mapping")
+            raise ValueError("Cursor run policy must be a mapping or ExecutionPolicy")
+        return self._compile_legacy_policy(policy)
+
+    def _compile_legacy_policy(self, policy: dict) -> ProviderPolicyArtifacts:
+        """Preserve the frozen readonly/outer-only compatibility path."""
         readonly = policy.get("readonly", False)
         outer_only = policy.get("outer_only", False)
         if type(readonly) is not bool or type(outer_only) is not bool:
@@ -105,6 +117,42 @@ class CursorDriver(AgentDriver):
         if outer_only:
             raise ValueError("Cursor does not support outer-only mode")
         return ProviderPolicyArtifacts()
+
+    def _compile_execution_policy(self, policy: ExecutionPolicy) -> ProviderPolicyArtifacts:
+        """Translate the safely representable subset of platform policy.
+
+        Current Cursor CLI documentation exposes an explicit native sandbox
+        switch. POL-007 uses that switch for task-shell-denied execution, but
+        intentionally does not claim destination-level egress or provider-state
+        confidentiality. Per-run destination allowlists remain SEC-007 work.
+        """
+        try:
+            require_policy_capabilities(policy, self.capabilities(), agent_id=self.id())
+        except MissingCapabilitiesError as exc:
+            raise UnsupportedCursorPolicyError(str(exc)) from exc
+
+        if policy.workspace.access == "none":
+            raise UnsupportedCursorPolicyError(
+                "Cursor policy compiler cannot represent workspace.access=none"
+            )
+
+        network_mode = policy.network.task_shell.mode
+        if network_mode == "allowlist":
+            raise UnsupportedCursorPolicyError(
+                "Cursor per-run task-shell destination allowlists are deferred to MA2-SEC-007"
+            )
+        if network_mode == "allow":
+            if policy.sandbox.required:
+                raise UnsupportedCursorPolicyError(
+                    "Cursor cannot combine sandbox.required=true with unrestricted task-shell network"
+                )
+            return ProviderPolicyArtifacts(argv=("--sandbox", "disabled"))
+
+        # task_shell=deny: enable Cursor's native sandbox. The broker-owned
+        # outer workspace mount still supplies the authoritative read-only/read-
+        # write workspace boundary. Exact destination-level denial is not
+        # advertised until SEC-007/T6 verifies the current Cursor build.
+        return ProviderPolicyArtifacts(argv=("--sandbox", "enabled"))
 
     def create_run_spec(
         self,
@@ -119,7 +167,7 @@ class CursorDriver(AgentDriver):
         if not isinstance(prompt, str):
             raise ValueError("prompt must be a string")
 
-        argv = ("agent", "--trust")
+        argv = ("agent", "--trust", *policy.argv)
         if prompt.strip():
             argv += (prompt,)
         return RunSpec(argv, interactive=True, policy_artifacts=policy)

@@ -1511,7 +1511,7 @@ to core executors.
 
 # Phase 4 — Provider-Neutral Policy Model
 
-Status: **In progress — MA2-POL-001 through MA2-POL-006 complete; next MA2-POL-007**
+Status: **In progress — MA2-POL-001 through MA2-POL-007 complete; next MA2-POL-008**
 
 ## Objective
 
@@ -1563,6 +1563,16 @@ approval semantics plus task-shell deny/allow/allowlist network controls. This
 translation is not hardened certification: Codex remains compatibility-class
 until credential confidentiality and destination-level egress pass the later
 T6 security contracts.
+
+`MA2-POL-007` implements Cursor-native translation against the current documented
+CLI sandbox surface. The driver now advertises the existence of a native sandbox
+and emits explicit `--sandbox enabled` for task-shell-denied policy execution.
+Unrestricted task networking is accepted only when sandboxing is not required,
+and per-run destination allowlists fail closed until MA2-SEC-007 adds and verifies
+Cursor network-policy materialization. The mutable `cli-config.json` reconciliation
+contract remains permissions-only, preserving Cursor-managed fields outside the
+platform-managed `permissions` object. Cursor remains compatibility-class until
+credential and egress T6 contracts pass.
 
 ### Exit Criteria
 
@@ -1854,8 +1864,8 @@ The practical sequence is:
 9. add capability checks                                  [complete: MA2-POL-004]
 10. map legacy flags                                      [complete: MA2-POL-005]
 11. compile Codex provider-native policy                   [complete: MA2-POL-006]
-12. compile Cursor provider-native policy                  [next: MA2-POL-007]
-13. add canonical policy serialization/hash
+12. compile Cursor provider-native policy                  [complete: MA2-POL-007]
+13. add canonical policy serialization/hash                 [next: MA2-POL-008]
 
 14. close credential confidentiality
 15. close task egress restriction
