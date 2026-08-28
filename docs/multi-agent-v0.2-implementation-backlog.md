@@ -1520,6 +1520,7 @@ Existing scripts continue to work during migration.
 ---
 
 ## MA2-POL-006 — Implement Codex Policy Compiler
+### Status: DONE
 
 Priority: **P0**
 
@@ -1543,7 +1544,12 @@ approval configuration
 ```
 
 Only capabilities actually verified against the supported Codex version may be
-advertised.
+advertised. The implementation baseline is the pinned Codex CLI 0.147.0 image.
+The compiler translates `ExecutionPolicy` workspace sandboxing, noninteractive
+approval behavior, and task-shell deny/allow/allowlist network controls while
+preserving the legacy readonly/outer-only dictionary path. Hardened security
+classes and network/credential policy capabilities remain unadvertised until
+the later authenticated/adversarial acceptance requirements provide evidence.
 
 ### Tests
 

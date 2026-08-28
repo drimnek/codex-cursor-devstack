@@ -6,6 +6,8 @@ construction and project/task lifecycle remain broker/runtime responsibilities.
 """
 from __future__ import annotations
 
+import json
+
 from agentdev.agents.base import (
     AgentCapabilities,
     AgentDriver,
@@ -17,6 +19,23 @@ from agentdev.agents.base import (
 )
 from agentdev.agents.state import ProviderStateAdapter, StatePolicyMount, StateVolumeLayout
 from agentdev.core.models import ProviderStateSpec, TaskContext
+from agentdev.policy.capabilities import MissingCapabilitiesError, require_policy_capabilities
+from agentdev.policy.schema import ExecutionPolicy
+
+
+CODEX_POLICY_COMPILER_BASELINE = "0.147.0"
+
+
+class UnsupportedCodexPolicyError(ValueError):
+    """Raised when the pinned Codex integration cannot represent a policy safely."""
+
+
+def _toml_domain_allowlist(destinations: tuple[str, ...]) -> str:
+    entries = ", ".join(
+        f'{json.dumps(destination, ensure_ascii=False)} = "allow"'
+        for destination in destinations
+    )
+    return f"features.network_proxy.domains={{ {entries} }}"
 
 
 class CodexDriver(AgentDriver):
@@ -85,8 +104,14 @@ class CodexDriver(AgentDriver):
         return RunSpec(("codex", "login", "status"), interactive=False)
 
     def compile_policy(self, policy: object) -> ProviderPolicyArtifacts:
+        if isinstance(policy, ExecutionPolicy):
+            return self._compile_execution_policy(policy)
         if not isinstance(policy, dict):
-            raise ValueError("Codex run policy must be a mapping")
+            raise ValueError("Codex run policy must be a mapping or ExecutionPolicy")
+        return self._compile_legacy_policy(policy)
+
+    def _compile_legacy_policy(self, policy: dict) -> ProviderPolicyArtifacts:
+        """Preserve the frozen readonly/outer-only invocation contract."""
         readonly = policy.get("readonly", False)
         outer_only = policy.get("outer_only", False)
         if type(readonly) is not bool or type(outer_only) is not bool:
@@ -102,6 +127,59 @@ class CodexDriver(AgentDriver):
         return ProviderPolicyArtifacts(
             argv=("--sandbox", sandbox, "-c", "approval_policy=never"),
         )
+
+    def _compile_execution_policy(self, policy: ExecutionPolicy) -> ProviderPolicyArtifacts:
+        """Translate provider-neutral policy into pinned Codex CLI controls.
+
+        The compiler targets the pinned 0.147.0 integration baseline. It emits
+        Codex-native sandbox/approval/network controls, but does not advertise
+        hardened support: credential confidentiality and destination-level
+        enforcement remain subject to the later T6 security contract.
+        """
+        try:
+            require_policy_capabilities(policy, self.capabilities(), agent_id=self.id())
+        except MissingCapabilitiesError as exc:
+            raise UnsupportedCodexPolicyError(str(exc)) from exc
+
+        if policy.workspace.access == "none":
+            raise UnsupportedCodexPolicyError(
+                "Codex policy compiler cannot represent workspace.access=none"
+            )
+        sandbox = "read-only" if policy.workspace.access == "read" else "workspace-write"
+        argv: list[str] = ["--sandbox", sandbox, "-c", "approval_policy=never"]
+
+        network = policy.network.task_shell
+        if sandbox == "read-only":
+            if network.mode != "deny":
+                raise UnsupportedCodexPolicyError(
+                    "Codex read-only sandbox cannot enable task-shell network access"
+                )
+            return ProviderPolicyArtifacts(argv=tuple(argv))
+
+        if network.mode == "deny":
+            argv += ["-c", "sandbox_workspace_write.network_access=false"]
+        elif network.mode == "allow":
+            argv += [
+                "-c",
+                "sandbox_workspace_write.network_access=true",
+                "-c",
+                "features.network_proxy.enabled=false",
+            ]
+        elif network.mode == "allowlist":
+            argv += [
+                "-c",
+                "sandbox_workspace_write.network_access=true",
+                "-c",
+                "features.network_proxy.enabled=true",
+                "-c",
+                _toml_domain_allowlist(network.destinations),
+            ]
+        else:
+            raise UnsupportedCodexPolicyError(
+                f"unsupported Codex task-shell network mode: {network.mode}"
+            )
+
+        return ProviderPolicyArtifacts(argv=tuple(argv))
 
     def create_run_spec(
         self,

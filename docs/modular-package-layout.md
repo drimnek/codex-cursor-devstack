@@ -1,6 +1,6 @@
 # Modular Package Layout
 
-Status: **CORE, AgentDriver, Runtime Backend, and Policy phases implemented through MA2-POL-005**
+Status: **CORE, AgentDriver, Runtime Backend, and Policy phases implemented through MA2-POL-006**
 
 This document records the implemented Python package and compatibility-entrypoint
 boundary after the completed CORE extraction series.
@@ -21,8 +21,9 @@ and non-agent GitNexus runtime-consumer boundaries are implemented through
 `MA2-RT-005`. The provider-neutral `ExecutionPolicy` schema, monotonic
 `PolicyResolver`, trusted built-in execution profiles, and capability requirement
 matching and deterministic legacy run-flag/profile compatibility mapping are
-implemented through `MA2-POL-005`; provider-native policy compilation is the next
-policy requirement.
+implemented through `MA2-POL-005`. `MA2-POL-006` adds provider-native
+`ExecutionPolicy` translation to `CodexDriver`; Cursor policy compilation is the
+next policy requirement.
 
 ## Current package structure
 
@@ -424,7 +425,7 @@ The completed CORE, AgentDriver, and Runtime Backend phases through `MA2-RT-005`
 provide the provider-neutral domain, provider, execution-plan, streaming, and
 runtime foundations while preserving GitNexus as a non-agent runtime consumer.
 
-The provider-neutral policy model is implemented through `MA2-POL-005`:
+The provider-neutral policy model and first provider compiler are implemented through `MA2-POL-006`:
 
 ```text
 ExecutionPolicy   implemented
@@ -435,6 +436,8 @@ CapabilityRequirement
                   implemented policy derivation + fail-closed matching
 Legacy run mapping
                   implemented readonly/review, writable/implement, and outer-only compatibility semantics
+Codex policy compiler
+                  implemented sandbox/approval/task-network translation for the pinned 0.147.0 baseline; hardened support remains uncertified
 ```
 
 Every broker-managed agent run now checks the capability names already carried

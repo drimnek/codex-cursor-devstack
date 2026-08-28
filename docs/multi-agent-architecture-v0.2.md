@@ -1511,7 +1511,7 @@ to core executors.
 
 # Phase 4 — Provider-Neutral Policy Model
 
-Status: **In progress — MA2-POL-001 through MA2-POL-005 complete; next MA2-POL-006**
+Status: **In progress — MA2-POL-001 through MA2-POL-006 complete; next MA2-POL-007**
 
 ## Objective
 
@@ -1555,6 +1555,14 @@ also defines deterministic conflict handling for a future direct profile request
 but the public `--profile` interface remains deferred to MA2-CLI-004.
 
 Do not immediately remove the legacy flags.
+
+`MA2-POL-006` implements Codex-native translation for the pinned Codex CLI
+0.147.0 baseline. The compiler preserves the legacy dictionary path while also
+accepting resolved `ExecutionPolicy` objects, translating workspace sandbox and
+approval semantics plus task-shell deny/allow/allowlist network controls. This
+translation is not hardened certification: Codex remains compatibility-class
+until credential confidentiality and destination-level egress pass the later
+T6 security contracts.
 
 ### Exit Criteria
 
@@ -1845,20 +1853,21 @@ The practical sequence is:
 8. add built-in profiles                                 [complete: MA2-POL-003]
 9. add capability checks                                  [complete: MA2-POL-004]
 10. map legacy flags                                      [complete: MA2-POL-005]
-11. compile provider-native policy                         [next: MA2-POL-006]
-12. add canonical policy serialization/hash
+11. compile Codex provider-native policy                   [complete: MA2-POL-006]
+12. compile Cursor provider-native policy                  [next: MA2-POL-007]
+13. add canonical policy serialization/hash
 
-13. close credential confidentiality
-14. close task egress restriction
+14. close credential confidentiality
+15. close task egress restriction
 
-15. introduce Run records
-16. make agentctl registry-driven
+16. introduce Run records
+17. make agentctl registry-driven
 
-17. add CopilotDriver
-18. add AntigravityDriver
+18. add CopilotDriver
+19. add AntigravityDriver
 
-19. remove legacy provider-specific interfaces
-20. pilot
+20. remove legacy provider-specific interfaces
+21. pilot
 ```
 
 The crucial ordering rule is:
