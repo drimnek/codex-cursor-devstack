@@ -41,12 +41,11 @@ CODEX_SANDBOX_ISOLATION = RuntimeIsolationRequirements(
 
 
 def codex_credential_confidentiality_config_argv(workspace_access: str) -> tuple[str, ...]:
-    """Return pinned Codex config overrides for the SEC-002 task-shell probe.
+    """Return pinned Codex controls that hide provider state from task shells.
 
-    The runtime checkpoint makes the direct Linux sandbox deployable inside the
-    outer executor, but this credential-denial material remains opt-in until
-    authenticated SEC-002 T5/T6 acceptance proves the task cannot recover
-    provider state.
+    SEC-002 uses the same configuration in normal policy-based native-sandbox
+    execution and in the deployed T5/T6 proof. Legacy compatibility execution
+    remains unchanged and does not claim this guarantee.
     """
     if workspace_access == "read":
         base_profile = ":read-only"
@@ -62,7 +61,11 @@ def codex_credential_confidentiality_config_argv(workspace_access: str) -> tuple
         "-c",
         f'permissions.{profile}.extends="{base_profile}"',
         "-c",
-        f'permissions.{profile}.filesystem={{ "{CODEX_PROVIDER_STATE_TARGET}" = "deny" }}',
+        (
+            f'permissions.{profile}.filesystem={{ '
+            f'"{CODEX_PROVIDER_STATE_TARGET}" = "deny", '
+            f'"{CODEX_PROVIDER_STATE_TARGET}/**" = "deny" }}'
+        ),
         "-c",
         'shell_environment_policy.inherit="all"',
         "-c",
@@ -234,6 +237,15 @@ class CodexDriver(AgentDriver):
         else:
             raise UnsupportedCodexPolicyError(
                 f"unsupported Codex task-shell network mode: {network.mode}"
+            )
+
+        if policy.credentials.provider_auth.task_shell == "deny":
+            if not policy.sandbox.required:
+                raise UnsupportedCodexPolicyError(
+                    "Codex provider-auth task-shell deny requires provider-native sandboxing"
+                )
+            argv += list(
+                codex_credential_confidentiality_config_argv(policy.workspace.access)
             )
 
         runtime_isolation = (

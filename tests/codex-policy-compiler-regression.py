@@ -13,6 +13,7 @@ from agentdev.agents.codex import (
     CODEX_POLICY_COMPILER_BASELINE,
     CodexDriver,
     UnsupportedCodexPolicyError,
+    codex_credential_confidentiality_config_argv,
 )
 from agentdev.core.models import TaskContext
 from agentdev.policy.schema import ExecutionPolicy
@@ -24,6 +25,8 @@ def policy(
     network: str = "deny",
     destinations: tuple[str, ...] = (),
     security_class: str = "compatibility",
+    sandbox_required: bool = True,
+    provider_auth: str = "deny",
 ) -> ExecutionPolicy:
     task_shell: dict[str, object] = {"mode": network}
     if destinations:
@@ -35,9 +38,9 @@ def policy(
             "reference": {"access": "read"},
             "filesystem": {"external": "deny"},
             "network": {"task_shell": task_shell},
-            "credentials": {"provider_auth": {"task_shell": "deny"}},
+            "credentials": {"provider_auth": {"task_shell": provider_auth}},
             "git": {"read": True, "commit": workspace == "write", "push": False},
-            "sandbox": {"required": True},
+            "sandbox": {"required": sandbox_required},
             "resources": {"cpu": 4, "memory": "8g", "pids": 1024},
             "security_class": security_class,
         }
@@ -73,9 +76,14 @@ def test_compiler_version_baseline() -> None:
 
 def test_workspace_and_network_translation() -> None:
     driver = CodexDriver()
+    read_credentials = codex_credential_confidentiality_config_argv("read")
+    write_credentials = codex_credential_confidentiality_config_argv("write")
 
     review = driver.compile_policy(policy(workspace="read", network="deny"))
-    assert review.argv == ("--sandbox", "read-only", "-c", "approval_policy=never")
+    assert review.argv == (
+        "--sandbox", "read-only", "-c", "approval_policy=never",
+        *read_credentials,
+    )
 
     implement = driver.compile_policy(policy(workspace="write", network="deny"))
     assert implement.argv == (
@@ -85,9 +93,12 @@ def test_workspace_and_network_translation() -> None:
         "approval_policy=never",
         "-c",
         "sandbox_workspace_write.network_access=false",
+        *write_credentials,
     )
 
-    unrestricted = driver.compile_policy(policy(workspace="write", network="allow"))
+    unrestricted = driver.compile_policy(
+        policy(workspace="write", network="allow", provider_auth="allow")
+    )
     assert unrestricted.argv == (
         "--sandbox",
         "workspace-write",
@@ -117,6 +128,7 @@ def test_workspace_and_network_translation() -> None:
         "features.network_proxy.enabled=true",
         "-c",
         'features.network_proxy.domains={ "pypi.org" = "allow", "registry.npmjs.org" = "allow" }',
+        *write_credentials,
     )
 
 
@@ -129,6 +141,10 @@ def test_unsupported_policy_fails_closed() -> None:
     expect_unsupported(
         policy(security_class="hardened"),
         "security_class:hardened",
+    )
+    expect_unsupported(
+        policy(sandbox_required=False),
+        "provider-auth task-shell deny requires provider-native sandboxing",
     )
 
 
@@ -145,6 +161,7 @@ def test_run_spec_consumes_compiled_policy() -> None:
         "approval_policy=never",
         "-c",
         "sandbox_workspace_write.network_access=false",
+        *codex_credential_confidentiality_config_argv("write"),
         "implement it",
     )
     assert run.policy_artifacts == compiled
