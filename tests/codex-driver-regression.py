@@ -37,6 +37,10 @@ def test_identity_capabilities_and_installation() -> None:
     assert driver.capabilities().native_policy
     assert driver.capabilities().native_sandbox
     assert driver.capabilities().compatibility_modes == frozenset({"outer-only"})
+    assert driver.capabilities().policy_capabilities == frozenset(
+        {"provider_state_protection"}
+    )
+    assert driver.capabilities().security_classes == frozenset({"compatibility"})
     assert driver.installation_spec().image_key == "codex"
     assert driver.installation_spec().containerfile == "Containerfile.codex"
     assert driver.installation_spec().version_key == "codex"

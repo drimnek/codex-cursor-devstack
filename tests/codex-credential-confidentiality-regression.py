@@ -52,11 +52,11 @@ def test_pinned_permission_material() -> None:
             raise AssertionError(f"invalid workspace access accepted: {bad!r}")
 
 
-def test_capability_advertising_remains_evidence_gated() -> None:
+def test_certified_capability_advertising() -> None:
     caps = CodexDriver().capabilities()
     assert caps.security_classes == frozenset({"compatibility"})
     assert "hardened" not in caps.security_classes
-    assert "provider_state_protection" not in caps.policy_capabilities
+    assert caps.policy_capabilities == frozenset({"provider_state_protection"})
 
 
 def test_probe_covers_authenticated_t5_and_required_t6_channels() -> None:
@@ -134,7 +134,7 @@ def test_provider_helper_remains_declarative() -> None:
 
 def main() -> None:
     test_pinned_permission_material()
-    test_capability_advertising_remains_evidence_gated()
+    test_certified_capability_advertising()
     test_probe_covers_authenticated_t5_and_required_t6_channels()
     test_negative_control_and_cleanup_are_synthetic()
     test_provider_helper_remains_declarative()

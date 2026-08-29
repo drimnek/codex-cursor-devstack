@@ -1720,7 +1720,7 @@ provider paths in the generic test definitions.
 ---
 
 ## MA2-SEC-002 — Enforce Codex Credential Confidentiality
-### Status: IN PROGRESS — NESTED SANDBOX PRIMITIVE PROVEN; CONTROL/TASK PROC BOUNDARY NEXT
+### Status: DONE
 
 Priority: **P0**
 
@@ -1762,40 +1762,34 @@ and must not inspect or traverse the outer control process.
 `outer-only` must not be advertised as satisfying this guarantee unless it
 actually does.
 
-#### Current Codex 0.147.0 runtime prerequisite
+#### Certified Codex 0.147.0 credential boundary
 
-The pinned Codex integration can express a custom permission profile that denies
-task-shell reads below `/root/.codex`, while environment filtering and disabled
-history persistence reduce other secret channels. That denied-read carveout
-requires Codex's direct Linux sandbox enforcement path.
+The pinned Codex integration runs the trusted provider control process under the
+non-root `1000:1000` identity, retains `cap-drop=all` and
+`no-new-privileges`, and requests the provider-neutral nested-sandbox bootstrap
+mechanism only when Codex must construct its native task sandbox. Scoped Codex
+state is mounted under `/home/node/.codex`.
 
-The deployed prerequisite investigation narrowed the runtime condition more
-precisely. Host user namespaces and `agentdev` subordinate UID/GID mappings work.
-A non-root Codex control process inside the rootless-Podman executor can also
-create a nested user namespace with no outer Linux capabilities. The default
-Podman `/proc` masking prevents the nested sandbox from mounting its fresh procfs;
-a diagnostic `unmask=/proc/*` permits both nested `--mount-proc` and Bubblewrap
-startup while `--cap-drop=all` and `no-new-privileges` remain active.
+Policy-based native-sandbox execution activates the pinned credential
+confidentiality profile. The profile denies both `/home/node/.codex` and
+`/home/node/.codex/**`, applies task-shell environment/history controls, and
+fails closed when provider-auth task-shell denial is requested without
+provider-native sandboxing. Legacy `outer-only` remains compatibility execution
+and does not satisfy SEC-002.
 
-That result proves the nested sandbox primitive is feasible but does not yet make
-procfs unmasking an accepted production setting. Before activation, the runtime
-model must represent nested-sandbox bootstrap without provider-specific branches,
-and T6 must prove that the inner task cannot observe the trusted control process
-through the relaxed outer procfs. `outer-only` cannot satisfy SEC-002, and the
-legacy Landlock fallback must not be substituted for a permission profile that
-requires direct runtime enforcement.
+The deployed authenticated T5/T6 proof passed against the production `codex exec`
+path. T5 verified that persisted Codex authentication and model-generated native
+sandbox execution remain functional. T6 first established a synthetic negative
+control that was readable from the trusted control side, then verified that the
+task could not retrieve provider state, the secret-shaped task environment value,
+inherited descriptors, or trusted control-process `environ`, `cmdline`, `fd`,
+`root`/`cwd`, and `mem` channels. The task also observed task-local process state,
+and the synthetic sentinel did not leak through captured task output.
 
-Before activating the credential policy or advertising
-`provider_state_protection`, run the opt-in, model-free prerequisite probe:
-
-```bash
-AGENTDEV_RUN_CODEX_CREDENTIAL_T6=1 \
-  tests/e2e/codex-credential-confidentiality-probe.py
-```
-
-A failed direct-sandbox prerequisite keeps SEC-002 open and requires a runtime/host
-remediation or a separate control/task process boundary. It is not permission to
-downgrade to compatibility execution.
+This evidence closes the Codex credential-confidentiality requirement and permits
+the driver to advertise `provider_state_protection`. It does not certify the full
+`hardened` security class: destination-level task-egress closure remains pending
+MA2-SEC-005/MA2-SEC-006.
 
 ### Tests
 
@@ -1811,7 +1805,9 @@ downgrade to compatibility execution.
 
 ### Acceptance
 
-Codex may advertise hardened credential confidentiality only after T6 passes.
+Codex advertises `provider_state_protection` after the authenticated deployed
+T5/T6 proof passes. Full `hardened` advertising remains blocked until the
+common credential and egress requirements are certified.
 
 ---
 
@@ -3122,7 +3118,7 @@ v0.2 must not be declared complete until all of the following are true:
 [ ] provider-neutral policy is authoritative
 [ ] policy hierarchy is monotonic
 [ ] hardened runs fail closed
-[ ] Codex hardened credential contract passes
+[x] Codex hardened credential contract passes
 [ ] Cursor hardened credential contract passes
 [ ] Codex hardened egress contract passes
 [ ] Cursor hardened egress contract passes

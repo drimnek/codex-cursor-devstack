@@ -68,8 +68,9 @@ profile, and run restriction layers, trusted built-in profiles and capability
 matching are implemented, legacy run flags map deterministically to profile
 intent, Codex/Cursor compile resolved policy into provider-native controls, and
 resolved policies have canonical serialization plus a stable SHA-256 fingerprint.
-The existing credential-confidentiality and destination-level task-egress
-findings remain explicit Phase 5 security work.
+Cursor credential confidentiality and destination-level task-egress findings
+remain explicit Phase 5 security work; Codex credential confidentiality is
+closed by MA2-SEC-002.
 
 
 ---
@@ -1598,29 +1599,31 @@ mechanisms. The public `--profile` CLI remains intentionally deferred to
 
 # Phase 5 — Security Closure
 
-Status: **In progress — MA2-SEC-001 complete; MA2-SEC-002 control/task boundary correction active**
+Status: **In progress — MA2-SEC-001/002 complete; MA2-SEC-003 next**
 
-The common hardened contract is implemented. SEC-002 now makes explicit a trust
-boundary that the v0.1 executor did not need to distinguish: the outer provider
-control process is a trusted platform component, while model-generated task
-commands are untrusted execution. The outer executor remains a defense-in-depth
-boundary around the provider, but hardened credential confidentiality is judged
-at the inner task boundary.
+The common hardened contract is implemented, and Codex credential
+confidentiality is certified for the pinned Codex 0.147.0 integration. The outer
+Codex provider control process is a trusted non-root compartment, while
+model-generated commands remain the untrusted task boundary.
 
-The deployed Codex prerequisite investigation proved that host user namespaces,
-rootless subordinate mappings, nested user namespaces, and Bubblewrap can work
-without granting outer Linux capabilities when the Codex control process runs as
-a non-root container user. The remaining bootstrap conflict came from Podman's
-default `/proc` masking: a diagnostic `unmask=/proc/*` allowed a fresh nested
-procfs and Bubblewrap startup. This is feasibility evidence only, not an accepted
-runtime exception.
+The runtime expresses nested-sandbox bootstrap as a provider-neutral execution
+requirement. Codex uses the non-root `1000:1000` control identity, retains
+`cap-drop=all` and `no-new-privileges`, and receives the minimal procfs bootstrap
+exception only when constructing its provider-native sandbox. The inner task
+receives task-local process visibility rather than visibility into the trusted
+control compartment.
 
-Any outer procfs relaxation required solely to construct a nested sandbox must be
-scoped as a sandbox-bootstrap mechanism, must not redefine host/system-information
-exposure as allowed task behavior, and must be followed by a fresh task-local PID
-namespace/procfs. The task must not be able to inspect or traverse the trusted
-control process through `/proc`. Neither `outer-only` nor a legacy sandbox fallback
-may be counted as credential confidentiality.
+Authenticated T5 proved that persisted Codex login and production `codex exec`
+native-sandbox execution remain functional. Adversarial T6 used a synthetic
+negative control and then proved that task execution cannot retrieve scoped Codex
+provider state or inspect/traverse the trusted control process through `environ`,
+`cmdline`, file descriptors, `root`/`cwd`, or memory/procfs channels. The
+synthetic sentinel also remained absent from captured task output.
+
+Codex may therefore advertise `provider_state_protection`. It remains
+`compatibility` security-class only: destination-level task egress is still open,
+so full `hardened` advertising remains blocked pending the common egress contract
+and Codex egress certification.
 
 ## Objective
 
@@ -1938,7 +1941,7 @@ The practical sequence is:
 12. compile Cursor provider-native policy                  [complete: MA2-POL-007]
 13. add canonical policy serialization/hash                 [complete: MA2-POL-008]
 
-14. close credential confidentiality                         [next: MA2-SEC-001/002/003]
+14. close credential confidentiality                         [in progress: SEC-001/002 complete; SEC-003 next]
 15. close task egress restriction
 
 16. introduce Run records

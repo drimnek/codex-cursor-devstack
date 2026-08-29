@@ -102,7 +102,7 @@ def test_codex_requests_nonroot_nested_sandbox_without_certifying_security() -> 
 
     caps = driver.capabilities()
     assert caps.security_classes == frozenset({"compatibility"})
-    assert "provider_state_protection" not in caps.policy_capabilities
+    assert caps.policy_capabilities == frozenset({"provider_state_protection"})
     assert "hardened" not in caps.security_classes
 
 
