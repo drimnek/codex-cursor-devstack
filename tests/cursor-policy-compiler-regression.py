@@ -14,7 +14,14 @@ from agentdev.core.models import TaskContext
 from agentdev.policy.schema import ExecutionPolicy
 
 
-def policy(*, workspace="write", network="deny", sandbox=True, security_class="compatibility"):
+def policy(
+    *,
+    workspace="write",
+    network="deny",
+    sandbox=True,
+    security_class="compatibility",
+    provider_auth="deny",
+):
     destinations = []
     if network == "allowlist":
         destinations = ["pypi.org", "registry.npmjs.org"]
@@ -24,7 +31,7 @@ def policy(*, workspace="write", network="deny", sandbox=True, security_class="c
         "reference": {"access": "read"},
         "filesystem": {"external": "deny"},
         "network": {"task_shell": {"mode": network, "destinations": destinations}},
-        "credentials": {"provider_auth": {"task_shell": "deny"}},
+        "credentials": {"provider_auth": {"task_shell": provider_auth}},
         "git": {"read": True, "commit": workspace == "write", "push": False},
         "sandbox": {"required": sandbox},
         "resources": {"cpu": 4, "memory": "8g", "pids": 1024},
@@ -67,7 +74,9 @@ def test_native_sandbox_translation() -> None:
         spec = driver.create_run_spec(context(), compiled, "inspect")
         assert spec.argv == ("agent", "--trust", "--sandbox", "enabled", "inspect")
 
-    unrestricted = driver.compile_policy(policy(network="allow", sandbox=False))
+    unrestricted = driver.compile_policy(
+        policy(network="allow", sandbox=False, provider_auth="allow")
+    )
     assert unrestricted.argv == ("--sandbox", "disabled")
 
 
@@ -92,6 +101,11 @@ def test_fail_closed_policy_limits() -> None:
         "security_class:hardened",
         driver.compile_policy,
         policy(security_class="hardened"),
+    )
+    expect_message(
+        "provider-auth task-shell deny requires provider-native sandboxing",
+        driver.compile_policy,
+        policy(network="allow", sandbox=False),
     )
 
 

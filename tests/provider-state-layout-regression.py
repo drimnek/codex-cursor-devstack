@@ -31,6 +31,9 @@ def make_cfg(root: Path) -> dict:
     (root / "platform" / "seed" / "cursor" / "cli-config.json").write_text(
         '{"permissions":{"allow":["Read(**)"],"deny":[]}}\n'
     )
+    (root / "platform" / "seed" / "cursor" / "credential-deny.cursorignore").write_text(
+        "/.cursor/\n/.config/cursor/\n"
+    )
     return {
         "root": str(root),
         "limits": {"pids": 128, "memory": "2g", "cpus": "2"},
@@ -92,6 +95,9 @@ def main() -> None:
         assert "agent-dev-cursor-auth:/home/node/.config/cursor:rw" in cursor_mounts
         assert "agent-dev-cursor-state:/home/node/.cursor:rw" in cursor_mounts
         assert not any(spec.split(":")[1] == "/root" for spec in codex_mounts)
+        assert any(
+            spec.endswith(":/home/node/.cursorignore:ro") for spec in cursor_mounts
+        )
         assert not any(spec.split(":")[1] == "/root" for spec in cursor_mounts)
         assert any(spec.endswith(":/home/node/.codex/config.toml:ro") for spec in codex_mounts)
 

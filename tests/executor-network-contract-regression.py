@@ -32,6 +32,9 @@ def make_cfg(root: Path) -> dict:
     (root / "platform" / "seed" / "cursor" / "cli-config.json").write_text(
         '{"permissions":{"allow":["Read(**)"],"deny":[]}}\n'
     )
+    (root / "platform" / "seed" / "cursor" / "credential-deny.cursorignore").write_text(
+        "/.cursor/\n/.config/cursor/\n"
+    )
     return {
         "root": str(root),
         "limits": {"pids": 128, "memory": "2g", "cpus": "2"},

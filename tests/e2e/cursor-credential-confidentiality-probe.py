@@ -45,6 +45,8 @@ _configure_import_path()
 
 from agentdev.agents.cursor import (  # noqa: E402
     CURSOR_CONTROL_ISOLATION,
+    CURSOR_CREDENTIAL_DENY_SEED,
+    CURSOR_CREDENTIAL_DENY_TARGET,
     CURSOR_SANDBOX_ISOLATION,
     CursorDriver,
 )
@@ -111,6 +113,28 @@ def probe_targets() -> tuple[str, str]:
     )
 
 
+def cursor_policy_mount_args(cfg: dict) -> list[str]:
+    policy_mounts = CursorDriver().state_adapter().policy_mounts
+    expected = (CURSOR_CREDENTIAL_DENY_SEED, CURSOR_CREDENTIAL_DENY_TARGET, True)
+    actual = tuple(
+        (item.seed_relative_path, item.target, item.read_only) for item in policy_mounts
+    )
+    if actual != (expected,):
+        raise SystemExit(f"unexpected Cursor credential policy mounts: {actual!r}")
+
+    seed_root = Path(cfg["root"]) / "platform" / "seed" / "cursor"
+    argv: list[str] = []
+    for item in policy_mounts:
+        source = seed_root / item.seed_relative_path
+        if not source.is_file():
+            raise SystemExit(f"missing Cursor credential deny policy: {source}")
+        argv += [
+            "-v",
+            f"{source}:{item.target}:{'ro' if item.read_only else 'rw'}",
+        ]
+    return argv
+
+
 def podman_base(
     cfg: dict,
     workspace: Path,
@@ -146,6 +170,7 @@ def podman_base(
         f"{state.source}:{state.target}:rw",
         "-v",
         f"{auth.source}:{auth.target}:rw",
+        *cursor_policy_mount_args(cfg),
         "-v",
         f"{workspace}:/workspace:rw",
         "-w",

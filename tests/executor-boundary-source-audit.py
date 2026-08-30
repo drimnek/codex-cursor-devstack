@@ -133,6 +133,9 @@ def make_fixture(tmp: Path) -> tuple[dict, Path, Path, Path, Path]:
     (root / "platform" / "seed" / "cursor").mkdir(parents=True)
     (root / "platform" / "seed" / "codex" / "config.toml").write_text("sandbox_mode = 'workspace-write'\n")
     (root / "platform" / "seed" / "cursor" / "cli-config.json").write_text('{"permissions": {}}\n')
+    (root / "platform" / "seed" / "cursor" / "credential-deny.cursorignore").write_text(
+        "/.cursor/\n/.config/cursor/\n"
+    )
 
     project = root / "projects" / "audit"
     workspace = project / "worktrees" / "REQ-AUDIT"
@@ -284,7 +287,20 @@ def main() -> int:
 
         cursor_args = agentd.common_runtime_args(cfg, "cursor", workspace, readonly=False, reference=reference, task_meta=task_meta)
         cursor_policy = find_mount(cursor_args, "/root/.cursor/cli-config.json")
-        audit.require(cursor_policy is None, "Cursor active config", "no immutable bind overlays writable Cursor active config", f"unexpected direct Cursor config bind: {cursor_policy}")
+        audit.require(
+            cursor_policy is None,
+            "Cursor active config",
+            "no immutable bind overlays writable Cursor active config",
+            f"unexpected direct Cursor config bind: {cursor_policy}",
+        )
+        cursor_credential_policy = find_mount(cursor_args, "/home/node/.cursorignore")
+        audit.require(
+            cursor_credential_policy is not None
+            and "ro" in mount_mode(cursor_credential_policy).split(","),
+            "Cursor credential-deny policy mount",
+            "Cursor credential-deny .cursorignore mounted ro",
+            f"Cursor credential-deny policy mount not ro: {cursor_credential_policy}",
+        )
 
         offline_args = agentd.common_runtime_args(
             cfg,

@@ -58,6 +58,10 @@ def make_cfg(root: Path) -> dict:
         'approval_policy = "never"\n',
         encoding="utf-8",
     )
+    (seed / "cursor" / "credential-deny.cursorignore").write_text(
+        "/.cursor/\n/.config/cursor/\n",
+        encoding="utf-8",
+    )
     return {
         "root": str(root),
         "state_dir": str(root / "state"),
@@ -113,6 +117,9 @@ def check_runtime_envelope() -> None:
         cursor_mounts = mount_specs(cursor)
         assert "agent-dev-cursor-state:/home/node/.cursor:rw" in cursor_mounts
         assert "agent-dev-cursor-auth:/home/node/.config/cursor:rw" in cursor_mounts
+        assert any(
+            spec.endswith(":/home/node/.cursorignore:ro") for spec in cursor_mounts
+        )
         assert not any(
             spec.endswith(":/home/node/.codex/config.toml:ro")
             for spec in cursor_mounts

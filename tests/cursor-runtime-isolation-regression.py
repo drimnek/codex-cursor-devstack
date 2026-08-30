@@ -25,14 +25,19 @@ from agentdev.policy.schema import ExecutionPolicy
 from agentdev.runtime.podman import runtime_isolation_args
 
 
-def policy(*, network: str = "deny", sandbox: bool = True) -> ExecutionPolicy:
+def policy(
+    *,
+    network: str = "deny",
+    sandbox: bool = True,
+    provider_auth: str = "deny",
+) -> ExecutionPolicy:
     return ExecutionPolicy.from_dict({
         "version": 1,
         "workspace": {"access": "write"},
         "reference": {"access": "read"},
         "filesystem": {"external": "deny"},
         "network": {"task_shell": {"mode": network, "destinations": []}},
-        "credentials": {"provider_auth": {"task_shell": "deny"}},
+        "credentials": {"provider_auth": {"task_shell": provider_auth}},
         "git": {"read": True, "commit": True, "push": False},
         "sandbox": {"required": sandbox},
         "resources": {"cpu": 4, "memory": "8g", "pids": 1024},
@@ -86,7 +91,9 @@ def test_cursor_runtime_isolation_contract() -> None:
 
     legacy = driver.compile_policy({"readonly": False, "outer_only": False})
     sandboxed = driver.compile_policy(policy())
-    unrestricted = driver.compile_policy(policy(network="allow", sandbox=False))
+    unrestricted = driver.compile_policy(
+        policy(network="allow", sandbox=False, provider_auth="allow")
+    )
     assert legacy.runtime_isolation == CURSOR_CONTROL_ISOLATION
     assert unrestricted.runtime_isolation == CURSOR_CONTROL_ISOLATION
     assert sandboxed.runtime_isolation == CURSOR_SANDBOX_ISOLATION

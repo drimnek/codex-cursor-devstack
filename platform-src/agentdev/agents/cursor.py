@@ -16,7 +16,7 @@ from agentdev.agents.base import (
     RunSpec,
     VersionProbeSpec,
 )
-from agentdev.agents.state import JsonFieldReconciliation, ProviderStateAdapter, StateVolumeLayout
+from agentdev.agents.state import JsonFieldReconciliation, ProviderStateAdapter, StatePolicyMount, StateVolumeLayout
 from agentdev.core.models import ProviderStateSpec, TaskContext
 from agentdev.execution.isolation import RuntimeIsolationRequirements
 from agentdev.policy.capabilities import MissingCapabilitiesError, require_policy_capabilities
@@ -28,6 +28,12 @@ CURSOR_RUNTIME_GID = 1000
 CURSOR_RUNTIME_HOME = "/home/node"
 CURSOR_STATE_TARGET = f"{CURSOR_RUNTIME_HOME}/.cursor"
 CURSOR_AUTH_TARGET = f"{CURSOR_RUNTIME_HOME}/.config/cursor"
+CURSOR_CREDENTIAL_DENY_SEED = "credential-deny.cursorignore"
+CURSOR_CREDENTIAL_DENY_TARGET = f"{CURSOR_RUNTIME_HOME}/.cursorignore"
+CURSOR_CREDENTIAL_DENY_PATTERNS = (
+    "/.cursor/",
+    "/.config/cursor/",
+)
 CURSOR_CONTROL_ISOLATION = RuntimeIsolationRequirements(
     uid=CURSOR_RUNTIME_UID,
     gid=CURSOR_RUNTIME_GID,
@@ -73,6 +79,13 @@ class CursorDriver(AgentDriver):
                 ),
             ),
             legacy_volume="agent-dev-cursor-home",
+            # Cursor's Linux native sandbox applies ~/.cursorignore to its
+            # sandboxed task filesystem for git-backed workspaces. Keep this
+            # broker-owned deny material immutable and separate from the
+            # provider-managed cli-config.json state.
+            policy_mounts=(
+                StatePolicyMount(CURSOR_CREDENTIAL_DENY_SEED, CURSOR_CREDENTIAL_DENY_TARGET, True),
+            ),
             reconciliation=JsonFieldReconciliation(
                 volume_key="state",
                 seed_relative_path="cli-config.json",
@@ -160,6 +173,11 @@ class CursorDriver(AgentDriver):
         if policy.workspace.access == "none":
             raise UnsupportedCursorPolicyError(
                 "Cursor policy compiler cannot represent workspace.access=none"
+            )
+
+        if policy.credentials.provider_auth.task_shell == "deny" and not policy.sandbox.required:
+            raise UnsupportedCursorPolicyError(
+                "Cursor provider-auth task-shell deny requires provider-native sandboxing"
             )
 
         network_mode = policy.network.task_shell.mode

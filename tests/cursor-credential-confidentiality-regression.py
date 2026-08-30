@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +15,9 @@ sys.path.insert(0, str(PLATFORM))
 from agentdev.agents.cursor import (  # noqa: E402
     CURSOR_AUTH_TARGET,
     CURSOR_CONTROL_ISOLATION,
+    CURSOR_CREDENTIAL_DENY_PATTERNS,
+    CURSOR_CREDENTIAL_DENY_SEED,
+    CURSOR_CREDENTIAL_DENY_TARGET,
     CURSOR_RUNTIME_GID,
     CURSOR_RUNTIME_UID,
     CURSOR_SANDBOX_ISOLATION,
@@ -29,6 +33,22 @@ def test_cursor_capability_remains_evidence_gated() -> None:
     assert caps.security_classes == frozenset({"compatibility"})
     assert "hardened" not in caps.security_classes
     assert "provider_state_protection" not in caps.policy_capabilities
+
+
+def test_cursor_credential_deny_policy_is_trusted_and_read_only() -> None:
+    adapter = CursorDriver().state_adapter()
+    assert tuple(
+        (item.seed_relative_path, item.target, item.read_only) for item in adapter.policy_mounts
+    ) == ((CURSOR_CREDENTIAL_DENY_SEED, CURSOR_CREDENTIAL_DENY_TARGET, True),)
+
+    seed = ROOT / "platform-src" / "seed" / "cursor" / CURSOR_CREDENTIAL_DENY_SEED
+    patterns = tuple(
+        line.strip()
+        for line in seed.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    assert patterns == CURSOR_CREDENTIAL_DENY_PATTERNS
+    assert CURSOR_CREDENTIAL_DENY_PATTERNS == ("/.cursor/", "/.config/cursor/")
 
 
 def test_probe_derives_split_cursor_state_contract() -> None:
@@ -50,6 +70,10 @@ def test_probe_derives_split_cursor_state_contract() -> None:
     )
     required = (
         "CursorDriver().state_adapter().volumes",
+        "CursorDriver().state_adapter().policy_mounts",
+        "cursor_policy_mount_args",
+        "CURSOR_CREDENTIAL_DENY_SEED",
+        "CURSOR_CREDENTIAL_DENY_TARGET",
         "CURSOR_CONTROL_ISOLATION",
         "CURSOR_SANDBOX_ISOLATION",
         "runtime_isolation_args",
@@ -94,6 +118,24 @@ def test_probe_derives_split_cursor_state_contract() -> None:
     assert "FILLER_PROCESS_COUNT = 48" in source
     assert "--cap-add" not in source
     assert "danger-full-access" not in source
+    assert 'subprocess.run(["git", "init", "-q", str(workspace)], check=True)' in source
+
+
+def test_probe_mounts_deployed_credential_deny_policy() -> None:
+    probe_path = ROOT / "tests/e2e/cursor-credential-confidentiality-probe.py"
+    spec = importlib.util.spec_from_file_location("cursor_sec003_probe_policy", probe_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        seed_dir = root / "platform" / "seed" / "cursor"
+        seed_dir.mkdir(parents=True)
+        seed = seed_dir / CURSOR_CREDENTIAL_DENY_SEED
+        seed.write_text("\n".join(CURSOR_CREDENTIAL_DENY_PATTERNS) + "\n", encoding="utf-8")
+        args = module.cursor_policy_mount_args({"root": str(root)})
+        assert args == ["-v", f"{seed}:{CURSOR_CREDENTIAL_DENY_TARGET}:ro"]
 
 
 def test_negative_control_is_synthetic_and_fail_closed() -> None:
@@ -152,7 +194,9 @@ def test_adversarial_wrapper_is_shell_syntax_valid() -> None:
 
 def main() -> None:
     test_cursor_capability_remains_evidence_gated()
+    test_cursor_credential_deny_policy_is_trusted_and_read_only()
     test_probe_derives_split_cursor_state_contract()
+    test_probe_mounts_deployed_credential_deny_policy()
     test_negative_control_is_synthetic_and_fail_closed()
     test_headless_probe_keeps_shell_commands_sandbox_eligible()
     test_adversarial_wrapper_is_shell_syntax_valid()
