@@ -55,14 +55,18 @@ def test_identity_capabilities_and_installation() -> None:
 def test_state_and_reconciliation() -> None:
     driver = CursorDriver()
     assert tuple(item.as_dict() for item in driver.state_spec()) == (
-        {"source": "agent-dev-cursor-state", "target": "/root/.cursor", "read_only": False},
-        {"source": "agent-dev-cursor-auth", "target": "/root/.config/cursor", "read_only": False},
+        {"source": "agent-dev-cursor-state", "target": "/home/node/.cursor", "read_only": False},
+        {"source": "agent-dev-cursor-auth", "target": "/home/node/.config/cursor", "read_only": False},
     )
     adapter = driver.state_adapter()
     assert adapter.legacy_volume == "agent-dev-cursor-home"
     assert adapter.primary().legacy_path == ".cursor"
     assert adapter.volume("auth").legacy_path == ".config/cursor"
     assert adapter.volume("auth").marker == ".agent-dev-auth-layout-v1"
+    assert (adapter.primary().owner_uid, adapter.primary().owner_gid) == (1000, 1000)
+    assert (adapter.volume("auth").owner_uid, adapter.volume("auth").owner_gid) == (
+        1000, 1000,
+    )
     reconciliation = adapter.reconciliation
     assert reconciliation is not None
     assert reconciliation.volume_key == "state"

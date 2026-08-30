@@ -11,7 +11,16 @@ ROOT = Path(__file__).resolve().parents[1]
 PLATFORM = ROOT / "platform-src"
 sys.path.insert(0, str(PLATFORM))
 
-from agentdev.agents.cursor import CursorDriver  # noqa: E402
+from agentdev.agents.cursor import (  # noqa: E402
+    CURSOR_AUTH_TARGET,
+    CURSOR_CONTROL_ISOLATION,
+    CURSOR_RUNTIME_GID,
+    CURSOR_RUNTIME_UID,
+    CURSOR_SANDBOX_ISOLATION,
+    CURSOR_STATE_TARGET,
+    CursorDriver,
+)
+from agentdev.runtime.podman import runtime_isolation_args  # noqa: E402
 
 
 def test_cursor_capability_remains_evidence_gated() -> None:
@@ -23,16 +32,27 @@ def test_cursor_capability_remains_evidence_gated() -> None:
 
 
 def test_probe_derives_split_cursor_state_contract() -> None:
-    layouts = {layout.key: layout.mount for layout in CursorDriver().state_adapter().volumes}
+    layouts = {layout.key: layout for layout in CursorDriver().state_adapter().volumes}
     assert set(layouts) == {"state", "auth"}
-    assert layouts["state"].target == "/root/.cursor"
-    assert layouts["auth"].target == "/root/.config/cursor"
+    assert layouts["state"].mount.target == CURSOR_STATE_TARGET
+    assert layouts["auth"].mount.target == CURSOR_AUTH_TARGET
+    for layout in layouts.values():
+        assert (layout.owner_uid, layout.owner_gid) == (CURSOR_RUNTIME_UID, CURSOR_RUNTIME_GID)
+
+    assert runtime_isolation_args(CURSOR_CONTROL_ISOLATION) == ["--user", "1000:1000"]
+    assert runtime_isolation_args(CURSOR_SANDBOX_ISOLATION) == [
+        "--user", "1000:1000",
+        "--security-opt=unmask=/proc/*",
+    ]
 
     source = (ROOT / "tests/e2e/cursor-credential-confidentiality-probe.py").read_text(
         encoding="utf-8"
     )
     required = (
         "CursorDriver().state_adapter().volumes",
+        "CURSOR_CONTROL_ISOLATION",
+        "CURSOR_SANDBOX_ISOLATION",
+        "runtime_isolation_args",
         "STATE_PROBE_NAME",
         "AUTH_PROBE_NAME",
         "AGENTDEV_RUN_CURSOR_CREDENTIAL_T6",
@@ -73,7 +93,6 @@ def test_probe_derives_split_cursor_state_contract() -> None:
     assert '"text",' in source
     assert "FILLER_PROCESS_COUNT = 48" in source
     assert "--cap-add" not in source
-    assert "--security-opt=unmask=/proc/*" not in source
     assert "danger-full-access" not in source
 
 

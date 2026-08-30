@@ -131,8 +131,8 @@ def test_builtin_registry_is_fixed_and_fail_closed() -> None:
     assert codex.auth_spec().argv == ("codex", "login", "--device-auth")
     assert cursor.capabilities().compatibility_modes == frozenset()
     assert tuple(item.target for item in cursor.state_spec()) == (
-        "/root/.cursor",
-        "/root/.config/cursor",
+        "/home/node/.cursor",
+        "/home/node/.config/cursor",
     )
     assert cursor.auth_spec().argv == ("agent", "login")
     expect(AgentRegistryError, registry.register, FakeDriver("third"))

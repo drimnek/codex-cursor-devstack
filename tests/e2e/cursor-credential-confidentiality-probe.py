@@ -43,7 +43,13 @@ def _configure_import_path() -> None:
 
 _configure_import_path()
 
-from agentdev.agents.cursor import CursorDriver  # noqa: E402
+from agentdev.agents.cursor import (  # noqa: E402
+    CURSOR_CONTROL_ISOLATION,
+    CURSOR_SANDBOX_ISOLATION,
+    CursorDriver,
+)
+from agentdev.execution.isolation import RuntimeIsolationRequirements  # noqa: E402
+from agentdev.runtime.podman import runtime_isolation_args  # noqa: E402
 
 
 RUN_ENV = "AGENTDEV_RUN_CURSOR_CREDENTIAL_T6"
@@ -110,6 +116,7 @@ def podman_base(
     workspace: Path,
     *,
     network_mode: str,
+    runtime_isolation: RuntimeIsolationRequirements,
     secret_file: Path | None = None,
     secret_token: str | None = None,
 ) -> list[str]:
@@ -134,6 +141,7 @@ def podman_base(
         "/tmp:rw,nosuid,nodev,size=512m",
         "--tmpfs",
         "/run:rw,nosuid,nodev,size=64m",
+        *runtime_isolation_args(runtime_isolation),
         "-v",
         f"{state.source}:{state.target}:rw",
         "-v",
@@ -186,13 +194,20 @@ def cursor_headless_argv(prompt: str) -> list[str]:
 
 
 def authenticated_t5(cfg: dict, workspace: Path) -> bool:
-    base = podman_base(
+    control_base = podman_base(
         cfg,
         workspace,
         network_mode=PROVIDER_NETWORK_MODE,
+        runtime_isolation=CURSOR_CONTROL_ISOLATION,
+    )
+    sandbox_base = podman_base(
+        cfg,
+        workspace,
+        network_mode=PROVIDER_NETWORK_MODE,
+        runtime_isolation=CURSOR_SANDBOX_ISOLATION,
     )
 
-    version = run([*base, "agent", "--version"], capture=True)
+    version = run([*control_base, "agent", "--version"], capture=True)
     if version.returncode != 0:
         print(f"SEC003 T5 FAIL: agent --version returned {version.returncode}")
         return False
@@ -202,7 +217,7 @@ def authenticated_t5(cfg: dict, workspace: Path) -> bool:
         return False
     print(f"SEC003 T5 CURSOR VERSION {version_text}")
 
-    status = run([*base, "agent", "status"], capture=True)
+    status = run([*control_base, "agent", "status"], capture=True)
     if status.returncode != 0:
         print(f"SEC003 T5 FAIL: agent status returned {status.returncode}")
         return False
@@ -219,7 +234,7 @@ def authenticated_t5(cfg: dict, workspace: Path) -> bool:
         "\"${CURSOR_SANDBOX_LANDLOCK_STATUS-}\" "
         f"> /workspace/{T5_MARKER}"
     )
-    result = run([*base, *cursor_headless_argv(prompt)], capture=True)
+    result = run([*sandbox_base, *cursor_headless_argv(prompt)], capture=True)
     if result.returncode != 0:
         detail = redacted_failure_detail((result.stdout or "") + (result.stderr or ""))
         message = f"SEC003 T5 FAIL: authenticated sandboxed agent run returned {result.returncode}"
@@ -544,6 +559,7 @@ def main() -> int:
             cfg,
             workspace,
             network_mode="none",
+            runtime_isolation=CURSOR_CONTROL_ISOLATION,
             secret_file=secret_file,
             secret_token=env_secret,
         )
@@ -551,6 +567,7 @@ def main() -> int:
             cfg,
             workspace,
             network_mode=PROVIDER_NETWORK_MODE,
+            runtime_isolation=CURSOR_SANDBOX_ISOLATION,
             secret_file=secret_file,
             secret_token=env_secret,
         )

@@ -264,6 +264,28 @@ def _migration_script(adapter) -> str:
     return "; ".join(parts)
 
 
+def _provider_state_layout_ready(image: str, layout) -> bool:
+    """Check an existing layout marker using the declared state owner."""
+    argv = [
+        "podman", "run", "--rm", "--network=none", "--http-proxy=false",
+        "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
+    ]
+    if layout.owner_uid is not None:
+        argv += runtime_isolation_args(
+            RuntimeIsolationRequirements(uid=layout.owner_uid, gid=layout.owner_gid)
+        )
+    marker = f"{layout.staging_target}/{layout.marker}"
+    argv += [
+        "-v", f"{layout.mount.source}:{layout.staging_target}:ro",
+        image, "bash", "-lc", f"test -e {shlex.quote(marker)}",
+    ]
+    return subprocess.run(
+        argv,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ).returncode == 0
+
+
 def prepare_provider_state(cfg: dict, provider: str) -> None:
     """Create driver-declared scoped state and migrate legacy state once."""
     adapter = provider_state_adapter(provider)
@@ -278,17 +300,18 @@ def prepare_provider_state(cfg: dict, provider: str) -> None:
     ).returncode == 0
 
     image = cfg["images"]["base"]
-    argv = [
-        "podman", "run", "--rm", "--network=none", "--http-proxy=false",
-        "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
-        "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
-    ]
-    for layout in adapter.volumes:
-        argv += ["-v", f"{layout.mount.source}:{layout.staging_target}:rw"]
-    if legacy_exists:
-        argv += ["-v", f"{legacy}:/legacy:ro"]
-    argv += [image, "bash", "-lc", _migration_script(adapter)]
-    subprocess.run(argv, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not all(_provider_state_layout_ready(image, layout) for layout in adapter.volumes):
+        argv = [
+            "podman", "run", "--rm", "--network=none", "--http-proxy=false",
+            "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
+        ]
+        for layout in adapter.volumes:
+            argv += ["-v", f"{layout.mount.source}:{layout.staging_target}:rw"]
+        if legacy_exists:
+            argv += ["-v", f"{legacy}:/legacy:ro"]
+        argv += [image, "bash", "-lc", _migration_script(adapter)]
+        subprocess.run(argv, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     for layout in adapter.volumes:
         if layout.owner_uid is None:
@@ -298,6 +321,9 @@ def prepare_provider_state(cfg: dict, provider: str) -> None:
         probe = [
             "podman", "run", "--rm", "--network=none", "--http-proxy=false",
             "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
+            *runtime_isolation_args(
+                RuntimeIsolationRequirements(uid=layout.owner_uid, gid=layout.owner_gid)
+            ),
             "-v", f"{layout.mount.source}:{layout.staging_target}:ro",
             image, "bash", "-lc",
             f"test \"$(stat -c '%u:%g' {shlex.quote(layout.staging_target)})\" = {owner} "
@@ -345,6 +371,12 @@ def seed_provider_home(cfg: dict, provider: str) -> None:
         "podman", "run", "--rm", "--network=none", "--http-proxy=false",
         "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
         "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
+    ]
+    if layout.owner_uid is not None:
+        argv += runtime_isolation_args(
+            RuntimeIsolationRequirements(uid=layout.owner_uid, gid=layout.owner_gid)
+        )
+    argv += [
         "-v", f"{layout.mount.source}:/state:rw",
         "-v", f"{config}:{seed_target}:ro",
     ]

@@ -100,8 +100,8 @@ def test_builtin_state_metadata() -> None:
         {"source": "agent-dev-codex-state", "target": "/home/node/.codex", "read_only": False},
     )
     assert tuple(item.as_dict() for item in cursor.state_spec()) == (
-        {"source": "agent-dev-cursor-state", "target": "/root/.cursor", "read_only": False},
-        {"source": "agent-dev-cursor-auth", "target": "/root/.config/cursor", "read_only": False},
+        {"source": "agent-dev-cursor-state", "target": "/home/node/.cursor", "read_only": False},
+        {"source": "agent-dev-cursor-auth", "target": "/home/node/.config/cursor", "read_only": False},
     )
 
     codex_state = codex.state_adapter()
@@ -118,6 +118,10 @@ def test_builtin_state_metadata() -> None:
     assert cursor_state.primary().legacy_path == ".cursor"
     assert cursor_state.volume("auth").legacy_path == ".config/cursor"
     assert cursor_state.volume("auth").marker == ".agent-dev-auth-layout-v1"
+    assert (cursor_state.primary().owner_uid, cursor_state.primary().owner_gid) == (1000, 1000)
+    assert (cursor_state.volume("auth").owner_uid, cursor_state.volume("auth").owner_gid) == (
+        1000, 1000,
+    )
     assert cursor_state.reconciliation is not None
     assert cursor_state.reconciliation.volume_key == "state"
     assert cursor_state.reconciliation.seed_relative_path == "cli-config.json"
@@ -154,6 +158,11 @@ def test_legacy_migration_and_reconciliation_stay_compatible() -> None:
         calls.append(call)
         if call[:3] == ["podman", "volume", "exists"]:
             return Result(0)
+        if call[-1] in {
+            "test -e /state/.agent-dev-state-layout-v2",
+            "test -e /auth/.agent-dev-auth-layout-v1",
+        }:
+            return Result(1)
         return Result(0)
 
     agentd.subprocess.run = fake_run
@@ -172,6 +181,13 @@ def test_legacy_migration_and_reconciliation_stay_compatible() -> None:
 
             agentd.seed_provider_home(cfg, "codex")
             assert ensured == ["agent-dev-codex-state"]
+            codex_layout_probe = find_run(calls, "agent-dev-codex-state:/state:ro")
+            assert codex_layout_probe[-1] == "test -e /state/.agent-dev-state-layout-v2"
+            assert "--user" in codex_layout_probe
+            assert codex_layout_probe[codex_layout_probe.index("--user") + 1] == "1000:1000"
+            assert "--cap-drop=all" in codex_layout_probe
+            assert not any(item.startswith("--cap-add") for item in codex_layout_probe)
+
             migration = find_run(calls, "agent-dev-codex-state:/state:rw")
             assert "agent-dev-codex-home:/legacy:ro" in migration
             assert "/legacy/.codex/." in migration[-1]
@@ -185,6 +201,17 @@ def test_legacy_migration_and_reconciliation_stay_compatible() -> None:
             ensured.clear()
             agentd.seed_provider_home(cfg, "cursor")
             assert ensured == ["agent-dev-cursor-state", "agent-dev-cursor-auth"]
+            cursor_layout_probe = find_run(calls, "agent-dev-cursor-state:/state:ro")
+            assert cursor_layout_probe[-1] == "test -e /state/.agent-dev-state-layout-v2"
+            assert "--user" in cursor_layout_probe
+            assert cursor_layout_probe[cursor_layout_probe.index("--user") + 1] == "1000:1000"
+            assert "--cap-drop=all" in cursor_layout_probe
+            assert not any(item.startswith("--cap-add") for item in cursor_layout_probe)
+            assert not any(
+                call[-1] == "test -e /auth/.agent-dev-auth-layout-v1"
+                for call in calls
+            ), calls
+
             migration = find_run(calls, "agent-dev-cursor-state:/state:rw")
             assert "agent-dev-cursor-auth:/auth:rw" in migration
             assert "agent-dev-cursor-home:/legacy:ro" in migration
@@ -200,6 +227,8 @@ def test_legacy_migration_and_reconciliation_stay_compatible() -> None:
                 if "agent-dev-cursor-state:/state:rw" in call
                 and any("cli-config.json:/seed/cli-config.json:ro" in item for item in call)
             )
+            assert "--user" in reconcile
+            assert reconcile[reconcile.index("--user") + 1] == "1000:1000"
             assert ".permissions = $seed[0].permissions" in reconcile[-1]
     finally:
         agentd.subprocess.run = original_run

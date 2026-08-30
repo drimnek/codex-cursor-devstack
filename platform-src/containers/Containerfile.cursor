@@ -15,7 +15,8 @@ RUN mkdir -p /opt/cursor-cli \
     && mkdir -p /usr/local/share/agent-dev \
     && agent --version > /usr/local/share/agent-dev/cursor-version.txt
 
-ENV PATH="/opt/cursor-cli/.local/bin:${PATH}"
+ENV HOME="/home/node" \
+    PATH="/opt/cursor-cli/.local/bin:${PATH}"
 
 WORKDIR /workspace
 CMD ["agent"]

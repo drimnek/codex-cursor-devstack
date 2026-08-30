@@ -108,11 +108,11 @@ def check_runtime_envelope() -> None:
             spec.endswith(":/home/node/.codex/config.toml:ro")
             for spec in codex_mounts
         )
-        assert "agent-dev-cursor-auth:/root/.config/cursor:rw" not in codex_mounts
+        assert "agent-dev-cursor-auth:/home/node/.config/cursor:rw" not in codex_mounts
 
         cursor_mounts = mount_specs(cursor)
-        assert "agent-dev-cursor-state:/root/.cursor:rw" in cursor_mounts
-        assert "agent-dev-cursor-auth:/root/.config/cursor:rw" in cursor_mounts
+        assert "agent-dev-cursor-state:/home/node/.cursor:rw" in cursor_mounts
+        assert "agent-dev-cursor-auth:/home/node/.config/cursor:rw" in cursor_mounts
         assert not any(
             spec.endswith(":/home/node/.codex/config.toml:ro")
             for spec in cursor_mounts
@@ -320,15 +320,15 @@ def check_smoke_invocations() -> None:
                 and "--mode=network-none" in argv
             )
             assert "/home/node/.codex/.agent-dev-state-write-smoke" in codex_state[-1]
-            assert "/root/.config/cursor/.agent-dev-auth-write-smoke" not in codex_state[-1]
+            assert "/home/node/.config/cursor/.agent-dev-auth-write-smoke" not in codex_state[-1]
 
             cursor_state = next(
                 argv for argv in streams
                 if "--provider=cursor" in argv
                 and "--mode=network-none" in argv
             )
-            assert "/root/.cursor/.agent-dev-state-write-smoke" in cursor_state[-1]
-            assert "/root/.config/cursor/.agent-dev-auth-write-smoke" in cursor_state[-1]
+            assert "/home/node/.cursor/.agent-dev-state-write-smoke" in cursor_state[-1]
+            assert "/home/node/.config/cursor/.agent-dev-auth-write-smoke" in cursor_state[-1]
 
             provider_network = next(
                 argv for argv in streams

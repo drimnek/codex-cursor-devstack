@@ -18,8 +18,25 @@ from agentdev.agents.base import (
 )
 from agentdev.agents.state import JsonFieldReconciliation, ProviderStateAdapter, StateVolumeLayout
 from agentdev.core.models import ProviderStateSpec, TaskContext
+from agentdev.execution.isolation import RuntimeIsolationRequirements
 from agentdev.policy.capabilities import MissingCapabilitiesError, require_policy_capabilities
 from agentdev.policy.schema import ExecutionPolicy
+
+
+CURSOR_RUNTIME_UID = 1000
+CURSOR_RUNTIME_GID = 1000
+CURSOR_RUNTIME_HOME = "/home/node"
+CURSOR_STATE_TARGET = f"{CURSOR_RUNTIME_HOME}/.cursor"
+CURSOR_AUTH_TARGET = f"{CURSOR_RUNTIME_HOME}/.config/cursor"
+CURSOR_CONTROL_ISOLATION = RuntimeIsolationRequirements(
+    uid=CURSOR_RUNTIME_UID,
+    gid=CURSOR_RUNTIME_GID,
+)
+CURSOR_SANDBOX_ISOLATION = RuntimeIsolationRequirements(
+    uid=CURSOR_RUNTIME_UID,
+    gid=CURSOR_RUNTIME_GID,
+    nested_sandbox_bootstrap=True,
+)
 
 
 class UnsupportedCursorPolicyError(ValueError):
@@ -34,21 +51,25 @@ class CursorDriver(AgentDriver):
             volumes=(
                 StateVolumeLayout(
                     key="state",
-                    mount=ProviderStateSpec("agent-dev-cursor-state", "/root/.cursor"),
+                    mount=ProviderStateSpec("agent-dev-cursor-state", CURSOR_STATE_TARGET),
                     staging_target="/state",
                     marker=".agent-dev-state-layout-v2",
                     legacy_path=".cursor",
                     empty_error="provider state volume is non-empty but has no layout marker",
                     smoke_marker=".agent-dev-state-write-smoke",
+                    owner_uid=CURSOR_RUNTIME_UID,
+                    owner_gid=CURSOR_RUNTIME_GID,
                 ),
                 StateVolumeLayout(
                     key="auth",
-                    mount=ProviderStateSpec("agent-dev-cursor-auth", "/root/.config/cursor"),
+                    mount=ProviderStateSpec("agent-dev-cursor-auth", CURSOR_AUTH_TARGET),
                     staging_target="/auth",
                     marker=".agent-dev-auth-layout-v1",
                     legacy_path=".config/cursor",
                     empty_error="Cursor auth state volume is non-empty but has no layout marker",
                     smoke_marker=".agent-dev-auth-write-smoke",
+                    owner_uid=CURSOR_RUNTIME_UID,
+                    owner_gid=CURSOR_RUNTIME_GID,
                 ),
             ),
             legacy_volume="agent-dev-cursor-home",
@@ -96,10 +117,15 @@ class CursorDriver(AgentDriver):
             environment=(("NO_OPEN_BROWSER", "1"),),
             interactive=True,
             timeout_seconds=900,
+            runtime_isolation=CURSOR_CONTROL_ISOLATION,
         )
 
     def auth_status_spec(self) -> RunSpec:
-        return RunSpec(("agent", "status"), interactive=False)
+        return RunSpec(
+            ("agent", "status"),
+            interactive=False,
+            runtime_isolation=CURSOR_CONTROL_ISOLATION,
+        )
 
     def compile_policy(self, policy: object) -> ProviderPolicyArtifacts:
         if isinstance(policy, ExecutionPolicy):
@@ -116,7 +142,7 @@ class CursorDriver(AgentDriver):
             raise ValueError("Cursor readonly and outer_only policy values must be boolean")
         if outer_only:
             raise ValueError("Cursor does not support outer-only mode")
-        return ProviderPolicyArtifacts()
+        return ProviderPolicyArtifacts(runtime_isolation=CURSOR_CONTROL_ISOLATION)
 
     def _compile_execution_policy(self, policy: ExecutionPolicy) -> ProviderPolicyArtifacts:
         """Translate the safely representable subset of platform policy.
@@ -146,13 +172,19 @@ class CursorDriver(AgentDriver):
                 raise UnsupportedCursorPolicyError(
                     "Cursor cannot combine sandbox.required=true with unrestricted task-shell network"
                 )
-            return ProviderPolicyArtifacts(argv=("--sandbox", "disabled"))
+            return ProviderPolicyArtifacts(
+                argv=("--sandbox", "disabled"),
+                runtime_isolation=CURSOR_CONTROL_ISOLATION,
+            )
 
         # task_shell=deny: enable Cursor's native sandbox. The broker-owned
         # outer workspace mount still supplies the authoritative read-only/read-
         # write workspace boundary. Exact destination-level denial is not
         # advertised until SEC-007/T6 verifies the current Cursor build.
-        return ProviderPolicyArtifacts(argv=("--sandbox", "enabled"))
+        return ProviderPolicyArtifacts(
+            argv=("--sandbox", "enabled"),
+            runtime_isolation=CURSOR_SANDBOX_ISOLATION,
+        )
 
     def create_run_spec(
         self,
@@ -170,4 +202,9 @@ class CursorDriver(AgentDriver):
         argv = ("agent", "--trust", *policy.argv)
         if prompt.strip():
             argv += (prompt,)
-        return RunSpec(argv, interactive=True, policy_artifacts=policy)
+        return RunSpec(
+            argv,
+            interactive=True,
+            policy_artifacts=policy,
+            runtime_isolation=policy.runtime_isolation,
+        )
