@@ -474,6 +474,7 @@ def create_run_execution_plan(
     *,
     readonly: bool,
     outer_only: bool,
+    security_class: str,
     reference: Path,
     git_common: Path | None,
 ) -> ResolvedExecutionPlan:
@@ -534,7 +535,10 @@ def create_run_execution_plan(
         run_spec.environment,
         run_spec.policy_artifacts.environment,
     )
-    required_capabilities = {"workspace:readonly" if readonly else "workspace:writable"}
+    required_capabilities = {
+        "workspace:readonly" if readonly else "workspace:writable",
+        f"security_class:{security_class}",
+    }
     if run_spec.interactive:
         required_capabilities.add("interactive-run")
     if outer_only:
@@ -565,7 +569,7 @@ def create_run_execution_plan(
         runtime_isolation=run_spec.runtime_isolation,
         readonly=readonly,
         interaction_mode="interactive" if run_spec.interactive else "noninteractive",
-        security_class=None,
+        security_class=security_class,
         required_capabilities=frozenset(required_capabilities),
         auxiliary_mounts=tuple(auxiliary),
     )
@@ -1049,6 +1053,9 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
     )
     readonly = legacy_mapping.readonly
     outer_only = legacy_mapping.outer_only
+    security_class = legacy_mapping.security_class
+    if security_class is None:
+        raise RequestError("run request did not resolve an effective security class")
     prompt = req.get("prompt", "")
     if not isinstance(prompt, str) or len(prompt) > 100_000:
         raise RequestError("prompt must be a string <= 100000 characters")
@@ -1079,6 +1086,7 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
         run_spec,
         readonly=readonly,
         outer_only=outer_only,
+        security_class=security_class,
         reference=pp["reference"],
         git_common=git_common,
     )
@@ -1092,10 +1100,20 @@ def op_run(cfg: dict, conn: socket.socket, fileobj, req: dict) -> int:
         raise RequestError(str(exc)) from exc
     lock_name = run_lock_name(task, rec)
     with lock_one(pp, lock_name, readonly):
-        send(conn, {"type": "start", "interactive": plan.interaction_mode == "interactive"})
+        send(
+            conn,
+            {
+                "type": "start",
+                "interactive": plan.interaction_mode == "interactive",
+                "security_class": plan.security_class,
+            },
+        )
         rc = execute_runtime_plan(cfg, conn, fileobj, plan)
         try:
-            send(conn, {"type": "exit", "code": rc})
+            send(
+                conn,
+                {"type": "exit", "code": rc, "security_class": plan.security_class},
+            )
         except OSError:
             if rc != 130:
                 raise

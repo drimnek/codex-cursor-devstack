@@ -222,9 +222,13 @@ def check_controller_error_codes() -> None:
     original_connect = agentctl.rpc_connect
 
     class ResponseSocket:
-        def __init__(self, response: dict):
+        def __init__(self, response: dict | list[dict]):
+            responses = response if isinstance(response, list) else [response]
             self.fileobj = io.BytesIO(
-                json.dumps(response, separators=(",", ":")).encode() + b"\n"
+                b"".join(
+                    json.dumps(item, separators=(",", ":")).encode() + b"\n"
+                    for item in responses
+                )
             )
             self.sent = bytearray()
 
@@ -253,6 +257,34 @@ def check_controller_error_codes() -> None:
             else:
                 raise AssertionError("expected agentctl.rpc to exit on first error frame")
             assert message in stderr.getvalue()
+
+        run_sock = ResponseSocket([
+            {
+                "type": "start",
+                "interactive": False,
+                "security_class": "compatibility",
+            },
+            {"type": "exit", "code": 0, "security_class": "compatibility"},
+        ])
+        agentctl.rpc_connect = lambda _cfg: run_sock
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            assert agentctl.rpc({}, {"op": "run"}, interactive=False) == 0
+        assert "agentctl: security-class=compatibility" in stderr.getvalue()
+
+        missing_class = ResponseSocket([
+            {"type": "start", "interactive": False},
+            {"type": "exit", "code": 0},
+        ])
+        agentctl.rpc_connect = lambda _cfg: missing_class
+        stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(stderr):
+                agentctl.rpc({}, {"op": "run"}, interactive=False)
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError("run response without security class was accepted")
     finally:
         agentctl.rpc_connect = original_connect
 
@@ -340,11 +372,13 @@ def check_run_contract() -> None:
             agentd.seed_provider_home = lambda _cfg, _provider: None
 
             def fake_create_plan(
-                cfg, provider, context, run_spec, *, readonly, outer_only, reference, git_common
+                cfg, provider, context, run_spec, *, readonly, outer_only,
+                security_class, reference, git_common
             ):
                 required_capabilities = {
                     "workspace:readonly" if readonly else "workspace:writable",
                     "interactive-run",
+                    f"security_class:{security_class}",
                 }
                 if outer_only:
                     required_capabilities.add("compatibility:outer-only")
@@ -356,6 +390,7 @@ def check_run_contract() -> None:
                     outer_only=outer_only,
                     reference=reference,
                     git_common=git_common,
+                    security_class=security_class,
                     image=cfg["images"][provider],
                     interaction_mode="interactive",
                     required_capabilities=frozenset(required_capabilities),
@@ -385,10 +420,16 @@ def check_run_contract() -> None:
                 {"op": "run", "provider": "codex", "project": "project", "task": "task"},
             ) == 0
             assert frames(conn) == [
-                {"type": "start", "interactive": True},
-                {"type": "exit", "code": 0},
+                {
+                    "type": "start",
+                    "interactive": True,
+                    "security_class": "compatibility",
+                },
+                {"type": "exit", "code": 0, "security_class": "compatibility"},
             ]
             assert calls[-1].readonly is False
+            assert calls[-1].security_class == "compatibility"
+            assert "security_class:compatibility" in calls[-1].required_capabilities
             argv = captured_argv[-1]
             assert "--sandbox" in argv
             assert argv[argv.index("--sandbox") + 1] == "workspace-write"
@@ -419,6 +460,7 @@ def check_run_contract() -> None:
                 },
             ) == 0
             assert calls[-1].readonly is True
+            assert calls[-1].security_class == "compatibility"
             argv = captured_argv[-1]
             assert argv[argv.index("--sandbox") + 1] == "read-only"
 
@@ -437,6 +479,7 @@ def check_run_contract() -> None:
                     "prompt": "implement it",
                 },
             ) == 0
+            assert calls[-1].security_class == "compatibility"
             argv = captured_argv[-1]
             assert argv[argv.index("--sandbox") + 1] == "danger-full-access"
             assert argv[-1] == "implement it"

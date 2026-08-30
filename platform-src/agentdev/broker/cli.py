@@ -221,6 +221,16 @@ def rpc(cfg: dict, request: dict, *, interactive=False) -> int:
         if first.get("type") != "start":
             die(f"unexpected response from agentd: {first}")
 
+        run_security_class = None
+        if request.get("op") == "run":
+            run_security_class = first.get("security_class")
+            if run_security_class not in {"compatibility", "hardened"}:
+                die("run response is missing a valid effective security class")
+            print(
+                f"agentctl: security-class={run_security_class}",
+                file=sys.stderr,
+            )
+
         interactive = bool(first.get("interactive", interactive))
         if interactive:
             old_sigint = signal.getsignal(signal.SIGINT)
@@ -268,6 +278,11 @@ def rpc(cfg: dict, request: dict, *, interactive=False) -> int:
                 data = base64.b64decode(msg.get("data", ""))
                 os.write(sys.stdout.fileno(), data)
             elif mtype == "exit":
+                if (
+                    request.get("op") == "run"
+                    and msg.get("security_class") != run_security_class
+                ):
+                    die("run response changed effective security class")
                 return int(msg.get("code", 1))
             elif mtype == "error":
                 print(f"agentd: {msg.get('message', 'error')}", file=sys.stderr)

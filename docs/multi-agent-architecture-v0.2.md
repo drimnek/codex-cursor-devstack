@@ -1599,7 +1599,7 @@ mechanisms. The public `--profile` CLI remains intentionally deferred to
 
 # Phase 5 — Security Closure
 
-Status: **In progress — MA2-SEC-001/002/003 complete; MA2-SEC-004 next**
+Status: **In progress — MA2-SEC-001/002/003/004 complete; MA2-SEC-005 next**
 
 The common hardened contract is implemented, and Codex credential
 confidentiality is certified for the pinned Codex 0.147.0 integration. The outer
@@ -1645,6 +1645,18 @@ Codex and Cursor may therefore advertise `provider_state_protection`. Both
 remain `compatibility` security-class only: destination-level task egress is
 still open, so full `hardened` advertising remains blocked pending the common
 egress contract and provider egress certification.
+
+Compatibility execution is now explicit at the run boundary. Legacy
+`agentctl run` requests resolve to `security_class=compatibility`; that class is
+retained in the resolved execution plan, required through capability matching,
+reported in run start/exit RPC status, and printed by the controller before
+provider output begins. Codex `--outer-only` remains an explicit compatibility
+modifier and cannot be interpreted as hardened execution.
+
+The security-class capability is checked before the runtime backend executes the
+plan. A future hardened request therefore cannot silently execute through a
+compatibility-only provider: it must satisfy `security_class:hardened` or fail
+closed. Persistent run provenance remains Phase 6 work.
 
 ## Objective
 

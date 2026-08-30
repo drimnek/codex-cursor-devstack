@@ -31,6 +31,10 @@ from agentdev.execution.plan import (  # noqa: E402
     ResolvedProviderPolicyArtifacts,
     ResourceLimits,
 )
+from agentdev.policy.capabilities import (  # noqa: E402
+    MissingCapabilitiesError,
+    require_capabilities,
+)
 
 
 def load_agentd():
@@ -225,6 +229,7 @@ def check_broker_plan_resolution() -> None:
                 run_spec,
                 readonly=True,
                 outer_only=False,
+                security_class="compatibility",
                 reference=reference,
                 git_common=git_common,
             )
@@ -249,9 +254,11 @@ def check_broker_plan_resolution() -> None:
             assert plan.network.http_proxy is False
             assert plan.readonly is True
             assert plan.interaction_mode == "interactive"
-            assert plan.security_class is None
+            assert plan.security_class == "compatibility"
             assert "workspace:readonly" in plan.required_capabilities
             assert "interactive-run" in plan.required_capabilities
+            assert "security_class:compatibility" in plan.required_capabilities
+            require_capabilities(plan.required_capabilities, driver.capabilities())
             assert plan.environment == (
                 ("AGENT_TASK_ID", "REQ-1"),
                 ("AGENT_TASK_MODE", "parallel"),
@@ -279,6 +286,28 @@ def check_broker_plan_resolution() -> None:
             assert argv[-6:] == [
                 "plan-test-image", "planctl", "run", "--policy", "workspace", "review"
             ]
+
+            hardened_plan = agentd.create_run_execution_plan(
+                cfg,
+                "plan-test",
+                context,
+                run_spec,
+                readonly=True,
+                outer_only=False,
+                security_class="hardened",
+                reference=reference,
+                git_common=git_common,
+            )
+            assert hardened_plan.security_class == "hardened"
+            assert "security_class:hardened" in hardened_plan.required_capabilities
+            try:
+                require_capabilities(
+                    hardened_plan.required_capabilities, driver.capabilities()
+                )
+            except MissingCapabilitiesError as exc:
+                assert "security_class:hardened" in exc.missing
+            else:
+                raise AssertionError("hardened plan passed through compatibility-only driver")
     finally:
         agentd.AGENT_REGISTRY = original_registry
 

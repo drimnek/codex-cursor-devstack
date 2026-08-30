@@ -1883,6 +1883,7 @@ credential and egress requirements are certified.
 ---
 
 ## MA2-SEC-004 — Make Compatibility Security Semantics Explicit
+### Status: DONE
 
 Priority: **P0**
 
@@ -1899,6 +1900,20 @@ Ensure run metadata/status/output identifies the effective security class.
 Legacy `--outer-only` must resolve to compatibility semantics unless all
 hardened requirements are actually satisfied.
 
+The broker now carries the effective security class from legacy/profile mapping
+into `ResolvedExecutionPlan.security_class` and adds the corresponding
+`security_class:<class>` requirement to the normal capability gate. Current
+legacy RPC runs therefore resolve explicitly to `compatibility`, including
+Codex `--outer-only`.
+
+Run start and exit frames carry the effective security class, and `agentctl run`
+prints it before provider output begins. The controller rejects a run response
+that omits the class or changes it between start and exit.
+
+This does not introduce persistent Run records or the public profile CLI.
+Those remain later provenance/CLI requirements. It only makes the effective
+security semantics of the existing run path explicit and fail-closed.
+
 ### Tests
 
 - T1/T2 downgrade rejection.
@@ -1907,7 +1922,9 @@ hardened requirements are actually satisfied.
 
 ### Acceptance
 
-A hardened request can never execute through a compatibility plan silently.
+A hardened request cannot execute through a compatibility-only provider because
+the resolved plan requires `security_class:hardened` through capability
+matching. Existing legacy runs visibly report `security_class=compatibility`.
 
 ---
 
@@ -3161,7 +3178,7 @@ v0.2 must not be declared complete until all of the following are true:
 [x] Cursor hardened credential contract passes
 [ ] Codex hardened egress contract passes
 [ ] Cursor hardened egress contract passes
-[ ] compatibility mode is explicitly weaker
+[x] compatibility mode is explicitly weaker
 [ ] run provenance is persisted
 [ ] agentctl provider discovery is registry-driven
 [ ] Copilot runs through the same architecture

@@ -396,11 +396,13 @@ def check_run_invocations() -> None:
             )
 
             def fake_create_plan(
-                cfg, provider, context, run_spec, *, readonly, outer_only, reference, git_common
+                cfg, provider, context, run_spec, *, readonly, outer_only,
+                security_class, reference, git_common
             ):
                 required_capabilities = {
                     "workspace:readonly" if readonly else "workspace:writable",
                     "interactive-run",
+                    f"security_class:{security_class}",
                 }
                 if outer_only:
                     required_capabilities.add("compatibility:outer-only")
@@ -410,6 +412,7 @@ def check_run_invocations() -> None:
                     run_spec=run_spec,
                     readonly=readonly,
                     outer_only=outer_only,
+                    security_class=security_class,
                     reference=reference,
                     git_common=git_common,
                     image=cfg["images"][provider],
@@ -513,6 +516,8 @@ def check_run_invocations() -> None:
                 assert plan.context.metadata_path == meta
                 assert plan.reference == reference
                 assert plan.git_common is None
+                assert plan.security_class == "compatibility"
+                assert "security_class:compatibility" in plan.required_capabilities
 
             assert seeded == [
                 "codex",

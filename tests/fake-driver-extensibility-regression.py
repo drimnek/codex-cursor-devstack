@@ -281,10 +281,12 @@ def test_generic_auth_and_run_consume_fake_specs() -> None:
                 context=context,
                 run_spec=run_spec,
                 interaction_mode="interactive",
+                security_class=kwargs["security_class"],
                 required_capabilities=frozenset(
                     {
                         "workspace:readonly" if kwargs.get("readonly", False) else "workspace:writable",
                         "interactive-run",
+                        f"security_class:{kwargs['security_class']}",
                     }
                     | ({"compatibility:outer-only"} if kwargs.get("outer_only", False) else set())
                 ),
@@ -338,8 +340,16 @@ def test_generic_auth_and_run_consume_fake_specs() -> None:
         "implement fake provider proof",
     ]
     assert frames == [
-        {"type": "start", "interactive": True},
-        {"type": "exit", "code": 0},
+        {
+            "type": "start",
+            "interactive": True,
+            "security_class": "compatibility",
+        },
+        {
+            "type": "exit",
+            "code": 0,
+            "security_class": "compatibility",
+        },
     ]
 
 

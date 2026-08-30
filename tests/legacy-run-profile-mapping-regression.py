@@ -107,6 +107,9 @@ def check_broker_and_public_surface() -> None:
     assert "resolve_run_profile_request(" in op_run
     assert "legacy_mapping.readonly" in op_run
     assert "legacy_mapping.outer_only" in op_run
+    assert "legacy_mapping.security_class" in op_run
+    assert "security_class=security_class" in op_run
+    assert '"security_class": plan.security_class' in op_run
 
     # POL-005 intentionally does not expose the new profile CLI/RPC yet.
     rpc_contract = (ROOT / "tests/broker-rpc-contract-regression.py").read_text(
