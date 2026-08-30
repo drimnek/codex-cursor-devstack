@@ -46,6 +46,10 @@ def test_identity_capabilities_and_installation() -> None:
     assert caps.native_policy
     assert caps.native_sandbox
     assert caps.compatibility_modes == frozenset()
+    assert caps.policy_capabilities == frozenset(
+        {"provider_state_protection"}
+    )
+    assert caps.security_classes == frozenset({"compatibility"})
     installation = driver.installation_spec()
     assert installation.image_key == "cursor"
     assert installation.containerfile == "Containerfile.cursor"

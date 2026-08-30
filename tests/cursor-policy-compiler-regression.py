@@ -66,7 +66,9 @@ def test_native_sandbox_translation() -> None:
     assert driver.capabilities().security_classes == frozenset({"compatibility"})
     assert "network_deny" not in driver.capabilities().policy_capabilities
     assert "network_allowlist" not in driver.capabilities().policy_capabilities
-    assert "provider_state_protection" not in driver.capabilities().policy_capabilities
+    assert driver.capabilities().policy_capabilities == frozenset(
+        {"provider_state_protection"}
+    )
 
     for workspace in ("read", "write"):
         compiled = driver.compile_policy(policy(workspace=workspace, network="deny"))

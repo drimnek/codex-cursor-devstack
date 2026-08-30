@@ -27,12 +27,12 @@ from agentdev.agents.cursor import (  # noqa: E402
 from agentdev.runtime.podman import runtime_isolation_args  # noqa: E402
 
 
-def test_cursor_capability_remains_evidence_gated() -> None:
+def test_certified_capability_advertising() -> None:
     caps = CursorDriver().capabilities()
     assert caps.native_sandbox
     assert caps.security_classes == frozenset({"compatibility"})
     assert "hardened" not in caps.security_classes
-    assert "provider_state_protection" not in caps.policy_capabilities
+    assert caps.policy_capabilities == frozenset({"provider_state_protection"})
 
 
 def test_cursor_credential_deny_policy_is_trusted_and_read_only() -> None:
@@ -193,7 +193,7 @@ def test_adversarial_wrapper_is_shell_syntax_valid() -> None:
 
 
 def main() -> None:
-    test_cursor_capability_remains_evidence_gated()
+    test_certified_capability_advertising()
     test_cursor_credential_deny_policy_is_trusted_and_read_only()
     test_probe_derives_split_cursor_state_contract()
     test_probe_mounts_deployed_credential_deny_policy()

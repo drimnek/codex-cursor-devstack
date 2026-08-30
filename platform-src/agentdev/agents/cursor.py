@@ -107,6 +107,7 @@ class CursorDriver(AgentDriver):
             interactive_run=True,
             native_policy=True,
             native_sandbox=True,
+            policy_capabilities=frozenset({"provider_state_protection"}),
         )
 
     def state_spec(self) -> tuple[ProviderStateSpec, ...]:

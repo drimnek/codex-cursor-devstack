@@ -1812,6 +1812,7 @@ common credential and egress requirements are certified.
 ---
 
 ## MA2-SEC-003 — Enforce Cursor Credential Confidentiality
+### Status: DONE
 
 Priority: **P0**
 
@@ -1829,17 +1830,55 @@ supported by the pinned/current CLI.
 
 Do not assume that `permissions` alone are a credential boundary.
 
+#### Certified Cursor 2026.08.11-e8db854 credential boundary
+
+The deployed Cursor integration runs the trusted provider control process under
+the non-root `1000:1000` identity while retaining `cap-drop=all` and
+`no-new-privileges`. Scoped provider state is mounted under
+`/home/node/.cursor`, scoped authentication under `/home/node/.config/cursor`,
+and provider-native sandbox execution requests the provider-neutral nested
+sandbox bootstrap mechanism only for the untrusted task boundary.
+
+The credential boundary does not rely on Cursor `permissions` alone. The broker
+mounts a trusted read-only `/home/node/.cursorignore` policy containing directory
+denies for `/.cursor/` and `/.config/cursor/`. In the git-backed project workspace,
+the current Cursor Linux native sandbox applies that policy to task filesystem
+access. Policy compilation fails closed when provider-auth task-shell denial is
+requested without provider-native sandboxing.
+
+The deployed authenticated T5/T6 proof passed through the same native-sandbox
+execution shape used by the SEC-003 provider path. T5 verified persisted Cursor
+authentication and required the generated task command to report
+`CURSOR_SANDBOX=native` with an enforced Linux backend (`fully_enforced` or
+`bubblewrap`). T6 first established a synthetic secret negative control readable
+from the trusted side, then verified that the untrusted task could not retrieve
+Cursor state or auth sentinels, the secret-shaped task environment value,
+inherited descriptors, or trusted control-process `environ`, `cmdline`, `fd`,
+filesystem-traversal, and memory channels. The task observed task-local procfs,
+and the synthetic sentinel did not leak through captured task output.
+
+This evidence closes the Cursor credential-confidentiality requirement and
+permits the driver to advertise `provider_state_protection`. It does not certify
+the full `hardened` security class: destination-level task-egress closure remains
+pending MA2-SEC-005/MA2-SEC-007.
+
 ### Tests
 
 - T1/T2 adapter/reconciliation tests.
 - T5 authenticated Cursor run.
-- T6 adversarial secret access attempts.
+- T6 adversarial state/auth, environment, descriptor, and output-leak attempts.
+- T6 control-process procfs attempts: `environ`, `cmdline`, `fd`,
+  filesystem traversal, and memory where applicable.
+- verify the inner task sees only task-local process state and cannot traverse
+  to the outer provider control compartment.
 - verify authentication still works.
 - T3.
 
 ### Acceptance
 
-Cursor may advertise hardened credential confidentiality only after T6 passes.
+Cursor advertises `provider_state_protection` after the authenticated deployed
+T5/T6 proof passes. Full `hardened` advertising remains blocked until the common
+credential and egress requirements are certified.
 
 ---
 
@@ -3119,7 +3158,7 @@ v0.2 must not be declared complete until all of the following are true:
 [ ] policy hierarchy is monotonic
 [ ] hardened runs fail closed
 [x] Codex hardened credential contract passes
-[ ] Cursor hardened credential contract passes
+[x] Cursor hardened credential contract passes
 [ ] Codex hardened egress contract passes
 [ ] Cursor hardened egress contract passes
 [ ] compatibility mode is explicitly weaker

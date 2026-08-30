@@ -104,7 +104,7 @@ def test_cursor_runtime_isolation_contract() -> None:
 
     caps = driver.capabilities()
     assert caps.security_classes == frozenset({"compatibility"})
-    assert "provider_state_protection" not in caps.policy_capabilities
+    assert caps.policy_capabilities == frozenset({"provider_state_protection"})
     assert "hardened" not in caps.security_classes
 
 

@@ -68,9 +68,9 @@ profile, and run restriction layers, trusted built-in profiles and capability
 matching are implemented, legacy run flags map deterministically to profile
 intent, Codex/Cursor compile resolved policy into provider-native controls, and
 resolved policies have canonical serialization plus a stable SHA-256 fingerprint.
-Cursor credential confidentiality and destination-level task-egress findings
-remain explicit Phase 5 security work; Codex credential confidentiality is
-closed by MA2-SEC-002.
+Destination-level task-egress findings remain explicit Phase 5 security work;
+Codex and Cursor credential confidentiality are closed by MA2-SEC-002 and
+MA2-SEC-003 respectively.
 
 
 ---
@@ -1599,7 +1599,7 @@ mechanisms. The public `--profile` CLI remains intentionally deferred to
 
 # Phase 5 — Security Closure
 
-Status: **In progress — MA2-SEC-001/002 complete; MA2-SEC-003 next**
+Status: **In progress — MA2-SEC-001/002/003 complete; MA2-SEC-004 next**
 
 The common hardened contract is implemented, and Codex credential
 confidentiality is certified for the pinned Codex 0.147.0 integration. The outer
@@ -1620,17 +1620,38 @@ provider state or inspect/traverse the trusted control process through `environ`
 `cmdline`, file descriptors, `root`/`cwd`, or memory/procfs channels. The
 synthetic sentinel also remained absent from captured task output.
 
-Codex may therefore advertise `provider_state_protection`. It remains
-`compatibility` security-class only: destination-level task egress is still open,
-so full `hardened` advertising remains blocked pending the common egress contract
-and Codex egress certification.
+Cursor credential confidentiality is also certified for the deployed
+2026.08.11-e8db854 CLI integration. The trusted Cursor control process runs as
+non-root `1000:1000`, scoped state and authentication live under `/home/node`,
+and provider-native sandbox execution receives the same provider-neutral nested
+sandbox bootstrap requirement without adding outer Linux capabilities.
+
+Cursor-native credential denial is broker-generated rather than delegated to
+`permissions` alone. A trusted read-only `/home/node/.cursorignore` policy hides
+`/.cursor/` and `/.config/cursor/` from sandboxed task commands in the git-backed
+workspace used by normal project execution. Policy compilation fails closed when
+provider-auth task-shell denial is requested without provider-native sandboxing.
+
+Authenticated T5 proved that persisted Cursor login remains functional and that
+the generated task command reports `CURSOR_SANDBOX=native` with an enforced
+Linux backend (`fully_enforced` or `bubblewrap`). Adversarial T6 established a
+trusted-side synthetic negative control, then proved that the sandboxed task
+cannot retrieve Cursor state/auth sentinels, the secret-shaped task environment
+value, inherited descriptors, or trusted control-process `environ`, `cmdline`,
+`fd`, filesystem-traversal, and memory channels. The task observed task-local
+procfs, and the synthetic sentinel remained absent from captured task output.
+
+Codex and Cursor may therefore advertise `provider_state_protection`. Both
+remain `compatibility` security-class only: destination-level task egress is
+still open, so full `hardened` advertising remains blocked pending the common
+egress contract and provider egress certification.
 
 ## Objective
 
-Close the two remaining execution-boundary gaps:
+Credential confidentiality is now certified for both current provider drivers.
+The remaining current-provider execution-boundary gap is:
 
 ```text
-credential confidentiality
 destination-level task egress restriction
 ```
 
@@ -1941,7 +1962,7 @@ The practical sequence is:
 12. compile Cursor provider-native policy                  [complete: MA2-POL-007]
 13. add canonical policy serialization/hash                 [complete: MA2-POL-008]
 
-14. close credential confidentiality                         [in progress: SEC-001/002 complete; SEC-003 next]
+14. close credential confidentiality                         [complete: SEC-001/002/003]
 15. close task egress restriction
 
 16. introduce Run records
