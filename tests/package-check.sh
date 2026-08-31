@@ -40,6 +40,7 @@ python3 -m py_compile "$ROOT/platform-src/bin/agentctl" "$ROOT/platform-src/bin/
 python3 -m py_compile "$ROOT/platform-src/agentdev/policy/resolver.py" "$ROOT/platform-src/agentdev/policy/profiles.py" "$ROOT/platform-src/agentdev/policy/capabilities.py" "$ROOT/platform-src/agentdev/policy/legacy.py" "$ROOT/platform-src/agentdev/policy/serialization.py" "$ROOT/platform-src/agentdev/agents/codex.py" "$ROOT/platform-src/agentdev/agents/cursor.py" "$ROOT/tests/policy-resolver-regression.py" "$ROOT/tests/execution-profiles-regression.py" "$ROOT/tests/capability-matching-regression.py" "$ROOT/tests/legacy-run-profile-mapping-regression.py" "$ROOT/tests/codex-policy-compiler-regression.py" "$ROOT/tests/cursor-policy-compiler-regression.py" "$ROOT/tests/policy-serialization-regression.py"
 python3 -m py_compile "$ROOT/tests/contracts/task_egress.py" "$ROOT/tests/task-egress-contract-regression.py"
 python3 -m py_compile "$ROOT/tests/codex-task-egress-regression.py"
+python3 -m py_compile "$ROOT/tests/e2e/codex-task-egress-probe.py"
 python3 -m py_compile "$ROOT/platform-src/agentdev/execution/isolation.py" "$ROOT/tests/codex-runtime-isolation-regression.py" "$ROOT/tests/cursor-runtime-isolation-regression.py" "$ROOT/tests/cursor-credential-confidentiality-regression.py" "$ROOT/tests/e2e/cursor-credential-confidentiality-probe.py"
 find "$ROOT/platform-src" "$ROOT/tests" -type d -name __pycache__ -prune -exec rm -rf {} +
 bash -n "$ROOT/bootstrap.sh" "$ROOT/tests/git-model-smoke.sh"

@@ -105,6 +105,8 @@ def codex_task_egress_config_argv(
         "-c",
         "sandbox_workspace_write.network_access=true",
         "-c",
+        'projects={ "/workspace" = { trust_level = "untrusted" } }',
+        "-c",
         "features.network_proxy.enabled=true",
         "-c",
         "features.network_proxy.enable_socks5=false",
