@@ -1,9 +1,45 @@
 #!/usr/bin/env bash
-set -euo pipefail
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+set -Eeuo pipefail
+
+fail() {
+  printf '[package-check] ERROR: %s\n' "$*" >&2
+  exit 2
+}
+
+# Resolve from the physical script location, not from the caller's cwd.
+# Prefer the Git worktree root when available; fall back to the canonical
+# tests/.. layout for source trees without Git metadata.
+SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd -P)"
+
+if GIT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"; then
+  ROOT="$(cd -- "$GIT_ROOT" && pwd -P)"
+else
+  ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+fi
+
+CANONICAL_CHECK="$(readlink -f -- "$ROOT/tests/package-check.sh" 2>/dev/null || true)"
+[[ "$CANONICAL_CHECK" == "$SCRIPT_PATH" ]] || fail \
+  "resolved script is not the repository tests/package-check.sh: script=$SCRIPT_PATH root=$ROOT"
+
+for required in \
+  bootstrap.sh \
+  platform-src/agentdev \
+  tests/security-regression.py \
+  tests/task-egress-contract-regression.py
+do
+  [[ -e "$ROOT/$required" ]] || fail \
+    "repository root validation failed: missing $ROOT/$required"
+done
+
+trap 'rc=$?; printf "[package-check] FAIL rc=%d line=%d command=%s\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit "$rc"' ERR
+
+printf '[package-check] script=%s\n' "$SCRIPT_PATH"
+printf '[package-check] root=%s\n' "$ROOT"
 python3 -m py_compile "$ROOT/platform-src/bin/agentctl" "$ROOT/platform-src/bin/agentd" "$ROOT/platform-src/agentdev/broker/cli.py" "$ROOT/platform-src/agentdev/broker/daemon.py" "$ROOT/platform-src/agentdev/broker/rpc.py" "$ROOT/platform-src/agentdev/agents/base.py" "$ROOT/platform-src/agentdev/agents/registry.py" "$ROOT/platform-src/agentdev/agents/state.py" "$ROOT/platform-src/agentdev/core/models.py" "$ROOT/platform-src/agentdev/core/validation.py" "$ROOT/platform-src/agentdev/core/projects.py" "$ROOT/platform-src/agentdev/core/git_handoff.py" "$ROOT/platform-src/agentdev/core/tasks.py" "$ROOT/platform-src/agentdev/core/dependencies.py" "$ROOT/platform-src/agentdev/core/worktrees.py" "$ROOT/platform-src/agentdev/core/locking.py" "$ROOT/platform-src/agentdev/execution/plan.py" "$ROOT/platform-src/agentdev/policy/schema.py" "$ROOT/platform-src/agentdev/runtime/base.py" "$ROOT/platform-src/agentdev/runtime/podman.py" "$ROOT/platform-src/agentdev/broker/runtime_io.py" "$ROOT/tests/security-regression.py" "$ROOT/tests/cursor-policy-reconciliation-regression.py"
 python3 -m py_compile "$ROOT/platform-src/agentdev/policy/resolver.py" "$ROOT/platform-src/agentdev/policy/profiles.py" "$ROOT/platform-src/agentdev/policy/capabilities.py" "$ROOT/platform-src/agentdev/policy/legacy.py" "$ROOT/platform-src/agentdev/policy/serialization.py" "$ROOT/platform-src/agentdev/agents/codex.py" "$ROOT/platform-src/agentdev/agents/cursor.py" "$ROOT/tests/policy-resolver-regression.py" "$ROOT/tests/execution-profiles-regression.py" "$ROOT/tests/capability-matching-regression.py" "$ROOT/tests/legacy-run-profile-mapping-regression.py" "$ROOT/tests/codex-policy-compiler-regression.py" "$ROOT/tests/cursor-policy-compiler-regression.py" "$ROOT/tests/policy-serialization-regression.py"
 python3 -m py_compile "$ROOT/tests/contracts/task_egress.py" "$ROOT/tests/task-egress-contract-regression.py"
+python3 -m py_compile "$ROOT/tests/codex-task-egress-regression.py"
 python3 -m py_compile "$ROOT/platform-src/agentdev/execution/isolation.py" "$ROOT/tests/codex-runtime-isolation-regression.py" "$ROOT/tests/cursor-runtime-isolation-regression.py" "$ROOT/tests/cursor-credential-confidentiality-regression.py" "$ROOT/tests/e2e/cursor-credential-confidentiality-probe.py"
 find "$ROOT/platform-src" "$ROOT/tests" -type d -name __pycache__ -prune -exec rm -rf {} +
 bash -n "$ROOT/bootstrap.sh" "$ROOT/tests/git-model-smoke.sh"
@@ -39,6 +75,7 @@ python3 "$ROOT/tests/agent-driver-contract-regression.py"
 python3 "$ROOT/tests/agent-registry-regression.py"
 python3 "$ROOT/tests/codex-driver-regression.py"
 python3 "$ROOT/tests/codex-policy-compiler-regression.py"
+python3 "$ROOT/tests/codex-task-egress-regression.py"
 python3 "$ROOT/tests/cursor-driver-regression.py"
 python3 "$ROOT/tests/cursor-policy-compiler-regression.py"
 python3 "$ROOT/tests/cursor-credential-confidentiality-regression.py"

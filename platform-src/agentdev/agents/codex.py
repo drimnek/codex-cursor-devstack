@@ -87,6 +87,44 @@ def _toml_domain_allowlist(destinations: tuple[str, ...]) -> str:
     return f"features.network_proxy.domains={{ {entries} }}"
 
 
+def codex_task_egress_config_argv(
+    mode: str,
+    destinations: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    """Return pinned Codex task-shell network controls for SEC-006."""
+    if mode == "deny":
+        if destinations:
+            raise ValueError("Codex network deny does not accept destinations")
+        return ("-c", "sandbox_workspace_write.network_access=false")
+    if mode != "allowlist":
+        raise ValueError("Codex task egress mode must be deny or allowlist")
+    if not destinations:
+        raise ValueError("Codex network allowlist requires destinations")
+
+    return (
+        "-c",
+        "sandbox_workspace_write.network_access=true",
+        "-c",
+        "features.network_proxy.enabled=true",
+        "-c",
+        "features.network_proxy.enable_socks5=false",
+        "-c",
+        "features.network_proxy.enable_socks5_udp=false",
+        "-c",
+        "features.network_proxy.allow_upstream_proxy=false",
+        "-c",
+        "features.network_proxy.dangerously_allow_non_loopback_proxy=false",
+        "-c",
+        "features.network_proxy.dangerously_allow_all_unix_sockets=false",
+        "-c",
+        'features.network_proxy.mode="full"',
+        "-c",
+        "features.network_proxy.allow_local_binding=false",
+        "-c",
+        _toml_domain_allowlist(destinations),
+    )
+
+
 class CodexDriver(AgentDriver):
     """Current Codex provider semantics frozen before policy-model migration."""
 
@@ -218,7 +256,7 @@ class CodexDriver(AgentDriver):
                     "Codex read-only sandbox cannot enable task-shell network access"
                 )
         elif network.mode == "deny":
-            argv += ["-c", "sandbox_workspace_write.network_access=false"]
+            argv += list(codex_task_egress_config_argv("deny"))
         elif network.mode == "allow":
             argv += [
                 "-c",
@@ -227,14 +265,9 @@ class CodexDriver(AgentDriver):
                 "features.network_proxy.enabled=false",
             ]
         elif network.mode == "allowlist":
-            argv += [
-                "-c",
-                "sandbox_workspace_write.network_access=true",
-                "-c",
-                "features.network_proxy.enabled=true",
-                "-c",
-                _toml_domain_allowlist(network.destinations),
-            ]
+            argv += list(
+                codex_task_egress_config_argv("allowlist", network.destinations)
+            )
         else:
             raise UnsupportedCodexPolicyError(
                 f"unsupported Codex task-shell network mode: {network.mode}"

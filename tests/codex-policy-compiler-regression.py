@@ -14,6 +14,7 @@ from agentdev.agents.codex import (
     CodexDriver,
     UnsupportedCodexPolicyError,
     codex_credential_confidentiality_config_argv,
+    codex_task_egress_config_argv,
 )
 from agentdev.core.models import TaskContext
 from agentdev.policy.schema import ExecutionPolicy
@@ -78,6 +79,10 @@ def test_workspace_and_network_translation() -> None:
     driver = CodexDriver()
     read_credentials = codex_credential_confidentiality_config_argv("read")
     write_credentials = codex_credential_confidentiality_config_argv("write")
+    deny_network = codex_task_egress_config_argv("deny")
+    allowlist_network = codex_task_egress_config_argv(
+        "allowlist", ("pypi.org", "registry.npmjs.org")
+    )
 
     review = driver.compile_policy(policy(workspace="read", network="deny"))
     assert review.argv == (
@@ -91,8 +96,7 @@ def test_workspace_and_network_translation() -> None:
         "workspace-write",
         "-c",
         "approval_policy=never",
-        "-c",
-        "sandbox_workspace_write.network_access=false",
+        *deny_network,
         *write_credentials,
     )
 
@@ -122,12 +126,7 @@ def test_workspace_and_network_translation() -> None:
         "workspace-write",
         "-c",
         "approval_policy=never",
-        "-c",
-        "sandbox_workspace_write.network_access=true",
-        "-c",
-        "features.network_proxy.enabled=true",
-        "-c",
-        'features.network_proxy.domains={ "pypi.org" = "allow", "registry.npmjs.org" = "allow" }',
+        *allowlist_network,
         *write_credentials,
     )
 
@@ -159,8 +158,7 @@ def test_run_spec_consumes_compiled_policy() -> None:
         "workspace-write",
         "-c",
         "approval_policy=never",
-        "-c",
-        "sandbox_workspace_write.network_access=false",
+        *codex_task_egress_config_argv("deny"),
         *codex_credential_confidentiality_config_argv("write"),
         "implement it",
     )
