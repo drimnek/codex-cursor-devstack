@@ -3,8 +3,9 @@
 
 Run as the deployed ``agentdev`` account after Codex authentication. Public
 fixtures must be controlled endpoints supplied by the operator. The probe uses
-the provider-neutral MA2-SEC-005 contract directly and does not advertise
-network or hardened capabilities; certification remains a separate commit.
+the provider-neutral MA2-SEC-005 contract directly. After SEC-006 certification,
+Codex advertises the proven network capabilities while full hardened security
+class advertising remains a separate SEC-008 gate.
 """
 from __future__ import annotations
 
@@ -994,14 +995,14 @@ def main() -> None:
             raise SystemExit(1)
 
     caps = CodexDriver().capabilities()
-    if "network_deny" in caps.policy_capabilities:
-        raise SystemExit("SEC006 FAIL: network_deny advertised before certification")
-    if "network_allowlist" in caps.policy_capabilities:
-        raise SystemExit("SEC006 FAIL: network_allowlist advertised before certification")
+    if "network_deny" not in caps.policy_capabilities:
+        raise SystemExit("SEC006 FAIL: certified network_deny capability is missing")
+    if "network_allowlist" not in caps.policy_capabilities:
+        raise SystemExit("SEC006 FAIL: certified network_allowlist capability is missing")
     if "hardened" in caps.security_classes:
-        raise SystemExit("SEC006 FAIL: hardened advertised before certification")
+        raise SystemExit("SEC006 FAIL: hardened advertised before SEC008")
 
-    print("SEC006 network capabilities remain evidence-gated pending certification")
+    print("SEC006 network capabilities certified; hardened remains evidence-gated")
     print("SEC006 AUTHENTICATED T5/T6 EGRESS PROOF PASS")
 
 

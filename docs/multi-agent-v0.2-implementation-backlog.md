@@ -1993,6 +1993,7 @@ provider-specific execution or endpoint details.
 ---
 
 ## MA2-SEC-006 — Enforce Codex Task-Shell Egress Policy
+### Status: DONE
 
 Priority: **P0**
 
@@ -2010,6 +2011,30 @@ required to satisfy the common contract.
 
 Provider API/control traffic must not imply unrestricted child command traffic.
 
+#### Certified Codex 0.147.0 task-egress boundary
+
+The deployed authenticated T5/T6 proof passed through the production `codex exec`
+path using persisted provider authentication and the MA2-SEC-005 common egress
+contract. Review and implement denied ordinary public, loopback, private,
+metadata, and raw-IP task traffic while provider-control connectivity remained
+functional. Dependency allowed the explicit destination set and denied
+non-allowlisted destinations, local/private/metadata and raw-IP bypasses, plus
+redirects from an allowed origin to a denied destination.
+
+Dependency probes are isolated one network attempt per Codex execution because
+managed-network denial may cancel the active shell tool. Explicit pinned Codex
+network-policy denial diagnostics are accepted as denial evidence when Codex
+suppresses child stdout; missing or unexplained observations still fail closed.
+Managed allowlist runs also mark `/workspace` project configuration untrusted so
+task-controlled `.codex/config.toml` cannot widen the broker-generated domain
+set. IPv6 remains required where supported and may be marked unsupported only
+with explicit diagnostic evidence.
+
+This evidence permits Codex to advertise `network_deny` and
+`network_allowlist`. It does not permit `hardened`: MA2-SEC-008 remains the
+security-class advertising gate after both provider egress requirements are
+complete.
+
 ### Tests
 
 - T1/T2 policy translation.
@@ -2019,7 +2044,9 @@ Provider API/control traffic must not imply unrestricted child command traffic.
 
 ### Acceptance
 
-Codex hardened profiles pass the common egress contract.
+Codex advertises `network_deny` and `network_allowlist` after the authenticated
+deployed T5/T6 proof passes the common egress contract. Full `hardened`
+advertising remains blocked pending MA2-SEC-007 and MA2-SEC-008.
 
 ---
 
@@ -3200,7 +3227,7 @@ v0.2 must not be declared complete until all of the following are true:
 [ ] hardened runs fail closed
 [x] Codex hardened credential contract passes
 [x] Cursor hardened credential contract passes
-[ ] Codex hardened egress contract passes
+[x] Codex hardened egress contract passes
 [ ] Cursor hardened egress contract passes
 [x] compatibility mode is explicitly weaker
 [ ] run provenance is persisted

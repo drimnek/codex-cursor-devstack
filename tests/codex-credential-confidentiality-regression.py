@@ -56,7 +56,7 @@ def test_certified_capability_advertising() -> None:
     caps = CodexDriver().capabilities()
     assert caps.security_classes == frozenset({"compatibility"})
     assert "hardened" not in caps.security_classes
-    assert caps.policy_capabilities == frozenset({"provider_state_protection"})
+    assert "provider_state_protection" in caps.policy_capabilities
 
 
 def test_probe_covers_authenticated_t5_and_required_t6_channels() -> None:

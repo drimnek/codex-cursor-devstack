@@ -178,15 +178,13 @@ def test_legacy_invocation_contract_is_preserved() -> None:
         assert compiled.argv == ("--sandbox", sandbox, "-c", "approval_policy=never")
 
 
-def test_sec002_is_certified_while_full_hardened_remains_uncertified() -> None:
+def test_sec002_and_sec006_are_certified_while_hardened_remains_gated() -> None:
     capabilities = CodexDriver().capabilities()
     assert capabilities.security_classes == frozenset({"compatibility"})
     assert "hardened" not in capabilities.security_classes
     assert capabilities.policy_capabilities == frozenset(
-        {"provider_state_protection"}
+        {"provider_state_protection", "network_deny", "network_allowlist"}
     )
-    assert "network_deny" not in capabilities.policy_capabilities
-    assert "network_allowlist" not in capabilities.policy_capabilities
 
 
 def test_codex_native_keys_stay_out_of_generic_policy_code() -> None:
@@ -207,7 +205,7 @@ def main() -> None:
     test_unsupported_policy_fails_closed()
     test_run_spec_consumes_compiled_policy()
     test_legacy_invocation_contract_is_preserved()
-    test_sec002_is_certified_while_full_hardened_remains_uncertified()
+    test_sec002_and_sec006_are_certified_while_hardened_remains_gated()
     test_codex_native_keys_stay_out_of_generic_policy_code()
     print("Codex policy compiler regression checks passed")
 

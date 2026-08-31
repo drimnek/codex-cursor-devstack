@@ -68,9 +68,9 @@ profile, and run restriction layers, trusted built-in profiles and capability
 matching are implemented, legacy run flags map deterministically to profile
 intent, Codex/Cursor compile resolved policy into provider-native controls, and
 resolved policies have canonical serialization plus a stable SHA-256 fingerprint.
-Destination-level task-egress findings remain explicit Phase 5 security work;
-Codex and Cursor credential confidentiality are closed by MA2-SEC-002 and
-MA2-SEC-003 respectively.
+Cursor destination-level task egress remains explicit Phase 5 security work.
+Codex task egress is certified by MA2-SEC-006, and Codex and Cursor credential
+confidentiality are closed by MA2-SEC-002 and MA2-SEC-003 respectively.
 
 
 ---
@@ -1599,7 +1599,7 @@ mechanisms. The public `--profile` CLI remains intentionally deferred to
 
 # Phase 5 — Security Closure
 
-Status: **In progress — MA2-SEC-001/002/003/004/005 complete; MA2-SEC-006 next**
+Status: **In progress — MA2-SEC-001/002/003/004/005/006 complete; MA2-SEC-007 next**
 
 The common hardened contract is implemented, and Codex credential
 confidentiality is certified for the pinned Codex 0.147.0 integration. The outer
@@ -1641,10 +1641,15 @@ value, inherited descriptors, or trusted control-process `environ`, `cmdline`,
 `fd`, filesystem-traversal, and memory channels. The task observed task-local
 procfs, and the synthetic sentinel remained absent from captured task output.
 
-Codex and Cursor may therefore advertise `provider_state_protection`. Both
-remain `compatibility` security-class only: destination-level task egress is
-still open, so full `hardened` advertising remains blocked pending the common
-egress contract and provider egress certification.
+Codex and Cursor may therefore advertise `provider_state_protection`. Codex
+also advertises `network_deny` and `network_allowlist` after the authenticated
+MA2-SEC-006 T5/T6 proof passed the common task-egress contract for review,
+implement, and dependency profiles, including project-config widening, raw-IP,
+private/metadata, and redirect-to-denied bypass attempts.
+
+Cursor destination-level task egress remains open under MA2-SEC-007. Both
+providers remain `compatibility` security-class only; full `hardened`
+advertising remains blocked until the evidence gate in MA2-SEC-008.
 
 Compatibility execution is now explicit at the run boundary. Legacy
 `agentctl run` requests resolve to `security_class=compatibility`; that class is
@@ -1660,11 +1665,12 @@ closed. Persistent run provenance remains Phase 6 work.
 
 ## Objective
 
-Credential confidentiality is now certified for both current provider drivers.
-The remaining current-provider execution-boundary gap is:
+Credential confidentiality is now certified for both current provider drivers,
+and Codex destination-level task egress is certified by MA2-SEC-006. The
+remaining current-provider execution-boundary gap is:
 
 ```text
-destination-level task egress restriction
+Cursor destination-level task egress restriction
 ```
 
 ## Credential Work
@@ -1745,8 +1751,8 @@ remains mandatory and missing observations fail closed.
 Provider control-plane connectivity is a separate positive observation in every
 profile. Provider adapters choose controlled test endpoints and execution
 mechanics; the common contract contains no provider CLI syntax, sandbox/runtime
-configuration, concrete hostname, URL, or IP address. `MA2-SEC-006` and
-`MA2-SEC-007` must satisfy this same contract for Codex and Cursor respectively.
+configuration, concrete hostname, URL, or IP address. `MA2-SEC-006` is
+certified for Codex; `MA2-SEC-007` must satisfy the same contract for Cursor.
 
 `MA2-SEC-001` establishes the common adversarial acceptance vocabulary before
 provider enforcement changes begin. The reusable contract defines observable
@@ -1991,7 +1997,7 @@ The practical sequence is:
 13. add canonical policy serialization/hash                 [complete: MA2-POL-008]
 
 14. close credential confidentiality                         [complete: SEC-001/002/003]
-15. close task egress restriction                            [in progress: SEC-005 complete; SEC-006 next]
+15. close task egress restriction                            [in progress: SEC-005/006 complete; SEC-007 next]
 
 16. introduce Run records
 17. make agentctl registry-driven

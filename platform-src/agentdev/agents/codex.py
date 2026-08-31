@@ -168,7 +168,9 @@ class CodexDriver(AgentDriver):
             native_policy=True,
             native_sandbox=True,
             compatibility_modes=frozenset({"outer-only"}),
-            policy_capabilities=frozenset({"provider_state_protection"}),
+            policy_capabilities=frozenset(
+                {"provider_state_protection", "network_deny", "network_allowlist"}
+            ),
         )
 
     def state_spec(self) -> tuple[ProviderStateSpec, ...]:

@@ -68,13 +68,13 @@ def test_invalid_egress_policy_fails_closed() -> None:
         )
 
 
-def test_capability_advertising_remains_evidence_gated() -> None:
+def test_sec006_network_capabilities_are_certified_while_hardened_remains_gated() -> None:
     caps = CodexDriver().capabilities()
     assert caps.security_classes == frozenset({"compatibility"})
     assert "hardened" not in caps.security_classes
-    assert caps.policy_capabilities == frozenset({"provider_state_protection"})
-    assert "network_deny" not in caps.policy_capabilities
-    assert "network_allowlist" not in caps.policy_capabilities
+    assert caps.policy_capabilities == frozenset(
+        {"provider_state_protection", "network_deny", "network_allowlist"}
+    )
 
 
 def test_helper_is_declarative_only() -> None:
@@ -154,6 +154,7 @@ def test_deployed_probe_consumes_common_contract() -> None:
         "request blocked by network policy.",
         "blocked-by-allowlist",
         "[truncated]",
+        "SEC006 network capabilities certified; hardened remains evidence-gated",
     )
     for marker in required:
         assert marker in source, marker
@@ -188,7 +189,7 @@ def main() -> None:
     test_pinned_deny_policy()
     test_pinned_allowlist_policy()
     test_invalid_egress_policy_fails_closed()
-    test_capability_advertising_remains_evidence_gated()
+    test_sec006_network_capabilities_are_certified_while_hardened_remains_gated()
     test_helper_is_declarative_only()
     test_deployed_probe_consumes_common_contract()
     print("Codex task egress deterministic regression checks passed")
