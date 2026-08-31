@@ -1929,6 +1929,7 @@ matching. Existing legacy runs visibly report `security_class=compatibility`.
 ---
 
 ## MA2-SEC-005 — Define Provider-Neutral Task Egress Contract
+### Status: DONE
 
 Priority: **P0**
 
@@ -1958,13 +1959,36 @@ provider control-plane connectivity remains functional
 Tests must use controlled test endpoints where possible rather than arbitrary
 third-party hosts.
 
+The reusable `tests/contracts/task_egress.py` contract defines only observable
+probe roles and expected allow/deny outcomes. It contains no provider identity,
+CLI syntax, sandbox/runtime configuration, hostname, URL, or concrete IP
+knowledge. Provider-specific T6 adapters select controlled endpoints and return
+observations through the common result-adapter interface.
+
+Review and implement require deny-by-default task networking. Dependency requires
+an explicit allowlisted destination to succeed while non-allowlisted, loopback,
+private, metadata/link-local, raw-IP, and redirect-to-denied attempts fail.
+Provider control-plane connectivity remains a separate required positive
+observation.
+
+IPv6 public, loopback, private, link-local, and raw-IP probes are part of the
+contract where supported. An adapter may mark only those IPv6 probes explicitly
+unsupported, with diagnostic detail. Missing probes and unsupported mandatory
+IPv4/address-agnostic probes fail closed.
+
 ### Tests
 
-T6 harness plus deterministic unit tests for policy resolution.
+- T1: deterministic contract/evaluator tests for every profile and bypass class.
+- T1: policy-resolution checks proving review/implement resolve to network deny,
+  dependency preserves an explicit allowlist, and lower layers cannot widen it.
+- T6: provider adapters execute the common contract against controlled endpoints.
+- T3.
 
 ### Acceptance
 
-Destination-level semantics are observable and provider-neutral.
+Destination-level semantics are observable and provider-neutral. The common
+contract can be consumed by both Codex and Cursor adapters without embedding
+provider-specific execution or endpoint details.
 
 ---
 

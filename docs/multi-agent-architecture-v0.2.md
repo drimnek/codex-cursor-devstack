@@ -1599,7 +1599,7 @@ mechanisms. The public `--profile` CLI remains intentionally deferred to
 
 # Phase 5 — Security Closure
 
-Status: **In progress — MA2-SEC-001/002/003/004 complete; MA2-SEC-005 next**
+Status: **In progress — MA2-SEC-001/002/003/004/005 complete; MA2-SEC-006 next**
 
 The common hardened contract is implemented, and Codex credential
 confidentiality is certified for the pinned Codex 0.147.0 integration. The outer
@@ -1730,7 +1730,23 @@ and, for dependency profiles:
 destination allowlist
 ```
 
-Provider control-plane connectivity remains separate.
+`MA2-SEC-005` defines a separate provider-neutral task-egress T6 contract for
+these destination semantics. Review and implement require an ordinary controlled
+public destination to be blocked. Dependency requires one explicit allowlisted
+destination to succeed while a non-allowlisted destination remains blocked.
+
+The same contract requires loopback, private, link-local/metadata, raw-IP, and
+redirect-to-denied bypass attempts to remain blocked. IPv6 public, loopback,
+private, link-local, and raw-IP equivalents are required where the acceptance
+environment supports IPv6; an adapter must report lack of IPv6 support explicitly
+rather than silently omitting those observations. Every non-IPv6 observation
+remains mandatory and missing observations fail closed.
+
+Provider control-plane connectivity is a separate positive observation in every
+profile. Provider adapters choose controlled test endpoints and execution
+mechanics; the common contract contains no provider CLI syntax, sandbox/runtime
+configuration, concrete hostname, URL, or IP address. `MA2-SEC-006` and
+`MA2-SEC-007` must satisfy this same contract for Codex and Cursor respectively.
 
 `MA2-SEC-001` establishes the common adversarial acceptance vocabulary before
 provider enforcement changes begin. The reusable contract defines observable
@@ -1975,7 +1991,7 @@ The practical sequence is:
 13. add canonical policy serialization/hash                 [complete: MA2-POL-008]
 
 14. close credential confidentiality                         [complete: SEC-001/002/003]
-15. close task egress restriction
+15. close task egress restriction                            [in progress: SEC-005 complete; SEC-006 next]
 
 16. introduce Run records
 17. make agentctl registry-driven
