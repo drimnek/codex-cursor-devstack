@@ -8,6 +8,7 @@ that agent-controlled repository are mediated here.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import tempfile
 from pathlib import Path, PurePosixPath
 
 from agentdev.agents.base import RunSpec
@@ -235,6 +237,77 @@ def provider_seed_dir(cfg: dict, provider: str) -> Path:
     root = Path(cfg["root"])
     seed_root = canonical_dir(root / "platform" / "seed", root / "platform", "provider seed root")
     return canonical_dir(seed_root / provider, seed_root, f"{provider} policy directory")
+
+
+def materialize_generated_policy_files(
+    task_meta: Path,
+    provider: str,
+    generated_files,
+) -> list[ExecutionMount]:
+    """Materialize dynamic provider policy outside the task workspace.
+
+    Content-addressed host paths prevent concurrent plans for one task/provider
+    from overwriting each other's policy before either runtime starts.
+    """
+    if not generated_files:
+        return []
+
+    tasks_root = task_meta.parent
+    policy_root = tasks_root / ".run-policy"
+    policy_root.mkdir(mode=0o700, exist_ok=True)
+    policy_root = canonical_dir(
+        policy_root,
+        tasks_root,
+        "generated provider policy root",
+    )
+
+    provider_root = policy_root / provider
+    provider_root.mkdir(mode=0o700, exist_ok=True)
+    provider_root = canonical_dir(
+        provider_root,
+        policy_root,
+        "generated provider policy directory",
+    )
+
+    mounts: list[ExecutionMount] = []
+    for item in generated_files:
+        digest = hashlib.sha256(
+            (item.target + "\x00" + item.content).encode("utf-8")
+        ).hexdigest()
+        destination = provider_root / f"{digest}-{item.name}"
+
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{item.name}.",
+            dir=provider_root,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(item.content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(tmp_name, 0o600)
+            os.replace(tmp_name, destination)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+            raise
+
+        source = canonical_file(
+            destination,
+            provider_root,
+            "generated provider policy",
+        )
+        mounts.append(
+            ExecutionMount(
+                str(source),
+                item.target,
+                item.read_only,
+                "provider-policy",
+            )
+        )
+    return mounts
 
 
 def _migration_script(adapter) -> str:
@@ -498,6 +571,13 @@ def create_run_execution_plan(
         ExecutionMount(item.source, item.target, item.read_only, "provider-policy")
         for item in run_spec.policy_artifacts.files
     ]
+    policy_mounts.extend(
+        materialize_generated_policy_files(
+            task_meta,
+            provider,
+            run_spec.policy_artifacts.generated_files,
+        )
+    )
     adapter = provider_state_adapter(provider)
     if adapter.policy_mounts:
         seed = provider_seed_dir(cfg, provider)

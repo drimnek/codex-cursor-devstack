@@ -16,6 +16,7 @@ from agentdev.agents.base import (
     AgentCapabilities,
     AgentDriver,
     AuthSpec,
+    GeneratedPolicyFileSpec,
     InstallationSpec,
     PolicyFileSpec,
     ProviderPolicyArtifacts,
@@ -148,10 +149,17 @@ def test_model_validation_and_serialization() -> None:
     expect(ValueError, ProviderStateSpec, "state-volume", "relative/path")
     expect(ValueError, ProviderStateSpec, "", "/root/.provider")
 
+    generated_policy = GeneratedPolicyFileSpec(
+        "sandbox.json",
+        "/root/.provider/sandbox.json",
+        '{"networkPolicy":{"default":"deny"}}\n',
+        True,
+    )
     policy = ProviderPolicyArtifacts(
         files=(PolicyFileSpec("/seed/policy", "/root/.provider/policy", True),),
         argv=("--policy", "strict"),
         environment=(("PROVIDER_MODE", "strict"),),
+        generated_files=(generated_policy,),
     )
     run = RunSpec(("provider-cli", "run"), (("RUN_MODE", "test"),), True, policy)
     auth = AuthSpec(("provider-cli", "login"), (("NO_BROWSER", "1"),), True, 900)
@@ -176,6 +184,21 @@ def test_model_validation_and_serialization() -> None:
     expect(ValueError, RunSpec, ())
     expect(ValueError, RunSpec, ("provider-cli",), (("DUP", "1"), ("DUP", "2")))
     expect(ValueError, PolicyFileSpec, "/seed/policy", "relative/policy")
+    expect(
+        ValueError,
+        GeneratedPolicyFileSpec,
+        "../sandbox.json",
+        "/root/.provider/sandbox.json",
+        "{}",
+    )
+    expect(
+        ValueError,
+        ProviderPolicyArtifacts,
+        files=(PolicyFileSpec("/seed/policy", "/same/target", True),),
+        generated_files=(
+            GeneratedPolicyFileSpec("generated.json", "/same/target", "{}"),
+        ),
+    )
     expect(ValueError, AgentCapabilities, frozenset({"unknown"}))
     expect(ValueError, AgentCapabilities, frozenset())
     expect(
@@ -304,6 +327,7 @@ def test_generic_contract_has_no_provider_identity_fields() -> None:
         AgentCapabilities,
         InstallationSpec,
         PolicyFileSpec,
+        GeneratedPolicyFileSpec,
         ProviderPolicyArtifacts,
         AuthSpec,
         VersionProbeSpec,

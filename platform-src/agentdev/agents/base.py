@@ -160,6 +160,35 @@ class PolicyFileSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class GeneratedPolicyFileSpec:
+    """Provider-native policy content materialized by the trusted broker."""
+
+    name: str
+    target: str
+    content: str
+    read_only: bool = True
+
+    def __post_init__(self) -> None:
+        _require_text(self.name, "generated policy name")
+        path = PurePosixPath(self.name)
+        if path.is_absolute() or len(path.parts) != 1 or self.name in {".", ".."}:
+            raise ValueError("generated policy name must be one basename")
+        _require_container_target(self.target, "generated policy target")
+        if not isinstance(self.content, str) or "\x00" in self.content:
+            raise ValueError("generated policy content must be text without NUL")
+        if type(self.read_only) is not bool:
+            raise ValueError("generated policy read_only must be boolean")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "target": self.target,
+            "content": self.content,
+            "read_only": self.read_only,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderPolicyArtifacts:
     """Provider-native output produced by policy compilation."""
 
@@ -167,11 +196,21 @@ class ProviderPolicyArtifacts:
     argv: tuple[str, ...] = ()
     environment: tuple[tuple[str, str], ...] = ()
     runtime_isolation: RuntimeIsolationRequirements = field(default_factory=RuntimeIsolationRequirements)
+    # Appended after the frozen positional fields so existing internal callers
+    # keep their current positional constructor semantics.
+    generated_files: tuple[GeneratedPolicyFileSpec, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.files, tuple) or not all(isinstance(item, PolicyFileSpec) for item in self.files):
             raise ValueError("files must be a tuple of PolicyFileSpec values")
+        if not isinstance(self.generated_files, tuple) or not all(
+            isinstance(item, GeneratedPolicyFileSpec) for item in self.generated_files
+        ):
+            raise ValueError(
+                "generated_files must be a tuple of GeneratedPolicyFileSpec values"
+            )
         targets = [item.target for item in self.files]
+        targets += [item.target for item in self.generated_files]
         if len(targets) != len(set(targets)):
             raise ValueError("policy file targets must be unique")
         if not isinstance(self.argv, tuple):
@@ -188,6 +227,7 @@ class ProviderPolicyArtifacts:
             "argv": list(self.argv),
             "environment": [list(item) for item in self.environment],
             "runtime_isolation": self.runtime_isolation.as_dict(),
+            "generated_files": [item.as_dict() for item in self.generated_files],
         }
 
 

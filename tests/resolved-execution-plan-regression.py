@@ -16,6 +16,7 @@ from agentdev.agents.base import (  # noqa: E402
     AgentCapabilities,
     AgentDriver,
     AuthSpec,
+    GeneratedPolicyFileSpec,
     InstallationSpec,
     PolicyFileSpec,
     ProviderPolicyArtifacts,
@@ -82,6 +83,14 @@ class PlanDriver(AgentDriver):
             files=(PolicyFileSpec("/trusted/plan-policy", "/etc/plan/policy", True),),
             argv=("--policy", "workspace"),
             environment=(("PLAN_POLICY", "workspace"),),
+            generated_files=(
+                GeneratedPolicyFileSpec(
+                    "generated.json",
+                    "/etc/plan/generated.json",
+                    '{"mode":"workspace"}\n',
+                    True,
+                ),
+            ),
         )
 
     def create_run_spec(
@@ -245,9 +254,21 @@ def check_broker_plan_resolution() -> None:
             assert plan.provider_state_mounts == (
                 mount("plan-state", "/var/lib/plan-test", False, "provider-state"),
             )
-            assert plan.provider_policy_artifacts.mounts == (
-                mount("/trusted/plan-policy", "/etc/plan/policy", True, "provider-policy"),
+            assert len(plan.provider_policy_artifacts.mounts) == 2
+            static_policy, generated_policy = plan.provider_policy_artifacts.mounts
+            assert static_policy == mount(
+                "/trusted/plan-policy",
+                "/etc/plan/policy",
+                True,
+                "provider-policy",
             )
+            assert generated_policy.target == "/etc/plan/generated.json"
+            assert generated_policy.read_only
+            generated_source = Path(generated_policy.source)
+            assert generated_source.read_text(encoding="utf-8") == '{"mode":"workspace"}\n'
+            assert generated_source.parent.name == "plan-test"
+            assert generated_source.parent.parent.name == ".run-policy"
+            assert generated_source.parent.parent.parent == tasks
             assert plan.provider_policy_artifacts.argv == ("--policy", "workspace")
             assert plan.resource_limits == ResourceLimits(128, "2g", 1)
             assert plan.network.mode == agentd.PROVIDER_NETWORK_MODE
@@ -280,6 +301,10 @@ def check_broker_plan_resolution() -> None:
             assert f"{workspace}:/workspace:ro" in argv
             assert "plan-state:/var/lib/plan-test:rw" in argv
             assert "/trusted/plan-policy:/etc/plan/policy:ro" in argv
+            assert (
+                f"{generated_source}:/etc/plan/generated.json:ro"
+                in argv
+            )
             assert "AGENT_TASK_ID=REQ-1" in argv
             assert "PLAN_DRIVER=1" in argv
             assert "PLAN_POLICY=workspace" in argv
