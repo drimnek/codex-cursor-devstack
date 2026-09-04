@@ -7,10 +7,13 @@ responsibilities.
 """
 from __future__ import annotations
 
+import json
+
 from agentdev.agents.base import (
     AgentCapabilities,
     AgentDriver,
     AuthSpec,
+    GeneratedPolicyFileSpec,
     InstallationSpec,
     ProviderPolicyArtifacts,
     RunSpec,
@@ -34,6 +37,17 @@ CURSOR_CREDENTIAL_DENY_PATTERNS = (
     "/.cursor/",
     "/.config/cursor/",
 )
+CURSOR_SANDBOX_POLICY_TARGET = f"{CURSOR_RUNTIME_HOME}/.cursor/sandbox.json"
+CURSOR_SANDBOX_PRIVATE_DENIES = (
+    "127.0.0.0/8",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16",
+    "::1/128",
+    "fc00::/7",
+    "fe80::/10",
+)
 CURSOR_CONTROL_ISOLATION = RuntimeIsolationRequirements(
     uid=CURSOR_RUNTIME_UID,
     gid=CURSOR_RUNTIME_GID,
@@ -47,6 +61,41 @@ CURSOR_SANDBOX_ISOLATION = RuntimeIsolationRequirements(
 
 class UnsupportedCursorPolicyError(ValueError):
     """Raised when current Cursor policy controls cannot represent a policy safely."""
+
+
+def cursor_task_egress_sandbox_json(
+    *,
+    workspace_access: str,
+    mode: str,
+    destinations: tuple[str, ...] = (),
+) -> str:
+    """Return broker-owned Cursor sandbox.json material for MA2-SEC-007."""
+    if workspace_access not in {"read", "write"}:
+        raise ValueError("Cursor sandbox policy requires workspace read or write access")
+    if mode == "deny":
+        if destinations:
+            raise ValueError("Cursor network deny does not accept destinations")
+        allow: tuple[str, ...] = ()
+    elif mode == "allowlist":
+        if not destinations:
+            raise ValueError("Cursor network allowlist requires destinations")
+        allow = tuple(destinations)
+    else:
+        raise ValueError("Cursor sandbox task egress mode must be deny or allowlist")
+
+    document = {
+        "type": (
+            "workspace_readonly"
+            if workspace_access == "read"
+            else "workspace_readwrite"
+        ),
+        "networkPolicy": {
+            "default": "deny",
+            "allow": list(allow),
+            "deny": list(CURSOR_SANDBOX_PRIVATE_DENIES),
+        },
+    }
+    return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
 
 
 class CursorDriver(AgentDriver):
@@ -182,10 +231,6 @@ class CursorDriver(AgentDriver):
             )
 
         network_mode = policy.network.task_shell.mode
-        if network_mode == "allowlist":
-            raise UnsupportedCursorPolicyError(
-                "Cursor per-run task-shell destination allowlists are deferred to MA2-SEC-007"
-            )
         if network_mode == "allow":
             if policy.sandbox.required:
                 raise UnsupportedCursorPolicyError(
@@ -196,11 +241,29 @@ class CursorDriver(AgentDriver):
                 runtime_isolation=CURSOR_CONTROL_ISOLATION,
             )
 
-        # task_shell=deny: enable Cursor's native sandbox. The broker-owned
-        # outer workspace mount still supplies the authoritative read-only/read-
-        # write workspace boundary. Exact destination-level denial is not
-        # advertised until SEC-007/T6 verifies the current Cursor build.
+        if network_mode not in {"deny", "allowlist"}:
+            raise UnsupportedCursorPolicyError(
+                f"unsupported Cursor task-shell network mode: {network_mode}"
+            )
+        if not policy.sandbox.required:
+            raise UnsupportedCursorPolicyError(
+                "Cursor deny/allowlist task-shell networking requires provider-native sandboxing"
+            )
+
+        sandbox_json = cursor_task_egress_sandbox_json(
+            workspace_access=policy.workspace.access,
+            mode=network_mode,
+            destinations=policy.network.task_shell.destinations,
+        )
         return ProviderPolicyArtifacts(
+            generated_files=(
+                GeneratedPolicyFileSpec(
+                    name="sandbox.json",
+                    target=CURSOR_SANDBOX_POLICY_TARGET,
+                    content=sandbox_json,
+                    read_only=True,
+                ),
+            ),
             argv=("--sandbox", "enabled"),
             runtime_isolation=CURSOR_SANDBOX_ISOLATION,
         )

@@ -9,7 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 PLATFORM = ROOT / "platform-src"
 sys.path.insert(0, str(PLATFORM))
 
-from agentdev.agents.cursor import CursorDriver, UnsupportedCursorPolicyError
+from agentdev.agents.cursor import (
+    CURSOR_SANDBOX_POLICY_TARGET,
+    CursorDriver,
+    UnsupportedCursorPolicyError,
+)
 from agentdev.core.models import TaskContext
 from agentdev.policy.schema import ExecutionPolicy
 
@@ -73,8 +77,21 @@ def test_native_sandbox_translation() -> None:
     for workspace in ("read", "write"):
         compiled = driver.compile_policy(policy(workspace=workspace, network="deny"))
         assert compiled.argv == ("--sandbox", "enabled")
+        assert len(compiled.generated_files) == 1
+        assert compiled.generated_files[0].target == CURSOR_SANDBOX_POLICY_TARGET
+        assert compiled.generated_files[0].read_only
+        assert '"default":"deny"' in compiled.generated_files[0].content
+        assert '"allow":[]' in compiled.generated_files[0].content
         spec = driver.create_run_spec(context(), compiled, "inspect")
         assert spec.argv == ("agent", "--trust", "--sandbox", "enabled", "inspect")
+
+    dependency = driver.compile_policy(policy(network="allowlist"))
+    assert dependency.argv == ("--sandbox", "enabled")
+    assert len(dependency.generated_files) == 1
+    assert dependency.generated_files[0].read_only
+    assert '"allow":["pypi.org","registry.npmjs.org"]' in (
+        dependency.generated_files[0].content
+    )
 
     unrestricted = driver.compile_policy(
         policy(network="allow", sandbox=False, provider_auth="allow")
@@ -84,11 +101,6 @@ def test_native_sandbox_translation() -> None:
 
 def test_fail_closed_policy_limits() -> None:
     driver = CursorDriver()
-    expect_message(
-        "destination allowlists are deferred",
-        driver.compile_policy,
-        policy(network="allowlist"),
-    )
     expect_message(
         "sandbox.required=true",
         driver.compile_policy,
