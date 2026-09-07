@@ -106,8 +106,13 @@ def test_generated_task_probe_observation_handoff_is_self_contained() -> None:
         ipv6_raw_url=None,
     )
     compile(generated, "<cursor-sec007-task-probe>", "exec")
-    assert "sandbox_line" not in generated
+    assert "sandbox_line = SANDBOX_PREFIX" in generated
+    assert "landlock_line = LANDLOCK_PREFIX" in generated
+    assert "CURSOR_SANDBOX" in generated
+    assert "CURSOR_SANDBOX_LANDLOCK_STATUS" in generated
     assert module.TASK_OBSERVATION_HANDOFF in generated
+    assert "SANDBOX_PREFIX" in generated
+    assert "LANDLOCK_PREFIX" in generated
     assert "DEFAULTS_PREFIX" in generated
     assert "OBS_PREFIX" in generated
 
@@ -141,6 +146,19 @@ def test_deployed_probe_consumes_common_contract_and_cursor_bypass_checks() -> N
         "SEC007 T5 CLI SANDBOX CONFIG",
         "SEC007 T5 CLI SANDBOX NETWORK MODE PASS",
         "SEC007 T5 AUTHENTICATED CONTROL PASS",
+        "CURSOR_SANDBOX",
+        "CURSOR_SANDBOX_LANDLOCK_STATUS",
+        "SEC007_SANDBOX:",
+        "SEC007_LANDLOCK:",
+        "SUPPORTED_LANDLOCK_STATUSES",
+        "fully_enforced",
+        "bubblewrap",
+        "SEC007 T6 HEADLESS SANDBOX ACTIVATION FAIL",
+        "Cursor headless agent -p did not enter the native ",
+        "sandbox; destination-level task egress cannot be certified",
+        "SEC007 T6 CHARACTERIZED CLI BUILDS",
+        "2026.08.11-e8db854",
+        "2026.09.02-c22c1a3",
         "user_config_only",
         "TASK_OBSERVATION_HANDOFF",
         "SEC007_TASK_OBSERVATION_HANDOFF_MISSING",

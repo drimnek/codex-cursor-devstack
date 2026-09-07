@@ -121,7 +121,14 @@ PRIVATE_IP_HANDOFF = "/tmp/.agentdev-sec007-private-ip"
 LOCAL_CONTROL_PASS = "SEC007_LOCAL_CONTROL_PASS"
 OBS_PREFIX = "SEC007_OBS:"
 DEFAULTS_PREFIX = "SEC007_DEFAULTS:"
+SANDBOX_PREFIX = "SEC007_SANDBOX:"
+LANDLOCK_PREFIX = "SEC007_LANDLOCK:"
 PROJECT_POLICY_MARKER = "SEC007 T6 PROJECT-SANDBOX WIDENING ATTEMPT INSTALLED"
+SUPPORTED_LANDLOCK_STATUSES = frozenset({"fully_enforced", "bubblewrap"})
+CHARACTERIZED_HEADLESS_SANDBOX_VERSIONS = (
+    "2026.08.11-e8db854",
+    "2026.09.02-c22c1a3",
+)
 
 PROBE_CURSOR_DEFAULTS_BYPASS = "cursor.network.defaults_bypass"
 
@@ -456,6 +463,7 @@ def task_probe_source(
     }
     return f"""#!/usr/bin/env python3
 from pathlib import Path
+import os
 import subprocess
 import sys
 
@@ -463,6 +471,8 @@ VALUES = {values!r}
 PRIVATE_IP_HANDOFF = {PRIVATE_IP_HANDOFF!r}
 OBS_PREFIX = {OBS_PREFIX!r}
 DEFAULTS_PREFIX = {DEFAULTS_PREFIX!r}
+SANDBOX_PREFIX = {SANDBOX_PREFIX!r}
+LANDLOCK_PREFIX = {LANDLOCK_PREFIX!r}
 
 def reachable(url, *, ipv6=False, follow=False):
     if not url:
@@ -508,6 +518,10 @@ def main():
         raise SystemExit(64)
     profile = sys.argv[1]
     vector = []
+    sandbox_line = SANDBOX_PREFIX + os.environ.get("CURSOR_SANDBOX", "")
+    landlock_line = LANDLOCK_PREFIX + os.environ.get(
+        "CURSOR_SANDBOX_LANDLOCK_STATUS", ""
+    )
     if profile in {{"review", "implement"}}:
         record(vector, "P", reachable(VALUES["denied_url"]))
     else:
@@ -533,9 +547,18 @@ def main():
     defaults_line = DEFAULTS_PREFIX + ("1" if defaults_allowed else "0")
     observation_line = OBS_PREFIX + ";".join(vector) + ";"
     Path({TASK_OBSERVATION_HANDOFF!r}).write_text(
-        defaults_line + "\\n" + observation_line + "\\n",
+        sandbox_line
+        + "\\n"
+        + landlock_line
+        + "\\n"
+        + defaults_line
+        + "\\n"
+        + observation_line
+        + "\\n",
         encoding="utf-8",
     )
+    print(sandbox_line)
+    print(landlock_line)
     print(defaults_line)
     print(observation_line)
 
@@ -636,6 +659,15 @@ def parse_observations(text: str) -> dict[str, EgressProbeObservation]:
     return observations
 
 
+def parse_runtime_marker(text: str, prefix: str) -> str | None:
+    value: str | None = None
+    for line in text.splitlines():
+        marker = line.find(prefix)
+        if marker >= 0:
+            value = line[marker + len(prefix):].strip()
+    return value
+
+
 
 def add_ipv6_unsupported(
     profile: str,
@@ -700,6 +732,30 @@ def run_profile(
     combined = (result.stdout or "") + (result.stderr or "")
     task_observation = combined
     observations = parse_observations(task_observation)
+
+    sandbox = parse_runtime_marker(task_observation, SANDBOX_PREFIX)
+    landlock = parse_runtime_marker(task_observation, LANDLOCK_PREFIX)
+    if sandbox != "native" or landlock not in SUPPORTED_LANDLOCK_STATUSES:
+        diagnostic = " | ".join(
+            line.strip() for line in task_observation.splitlines() if line.strip()
+        )
+        if diagnostic:
+            print(f"SEC007 T6 {profile.upper()} TASK OBSERVATION " + diagnostic)
+        print(
+            "SEC007 T6 HEADLESS SANDBOX ACTIVATION FAIL: "
+            f"{phase} {profile} reported CURSOR_SANDBOX={sandbox!r} "
+            f"CURSOR_SANDBOX_LANDLOCK_STATUS={landlock!r}"
+        )
+        print(
+            "SEC007 T6 BLOCKED: Cursor headless agent -p did not enter the native "
+            "sandbox; destination-level task egress cannot be certified"
+        )
+        print(
+            "SEC007 T6 CHARACTERIZED CLI BUILDS: "
+            + ", ".join(CHARACTERIZED_HEADLESS_SANDBOX_VERSIONS)
+        )
+        return False
+
     provider_control_ok = (
         result.returncode == 0
         and LOCAL_CONTROL_PASS in combined
