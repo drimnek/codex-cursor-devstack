@@ -2051,6 +2051,7 @@ advertising remains blocked pending MA2-SEC-007 and MA2-SEC-008.
 ---
 
 ## MA2-SEC-007 — Enforce Cursor Task-Shell Egress Policy
+### Status: IN PROGRESS — provider-native enforcement non-conformant; platform-controlled enforcement required
 
 Priority: **P0**
 
@@ -2063,19 +2064,74 @@ explicitly enabled.
 
 ### Implementation
 
-Use Cursor-native sandbox/network configuration and broker-controlled policy
-translation.
+Preserve the existing Cursor-native policy compiler and characterization as
+provider-specific enforcement material, but do not treat requested native
+sandbox state as authoritative SEC-005 evidence. The tested authenticated
+headless `agent -p --sandbox enabled` task shell does not enter Cursor's native
+sandbox on either characterized CLI build, while `agent sandbox run` succeeds
+in the same executor environment. Classify that headless provider-native path
+as non-conformant for SEC-005.
+
+Continue SEC-007 in these implementation stages rather than creating new top-
+level requirement IDs:
+
+```text
+1. provider-native characterization
+   DONE — NON-CONFORMANT for the tested headless path
+
+2. provider-neutral broker-controlled task execution boundary
+   NEXT
+
+3. Cursor task execution through that boundary
+   pending stage 2
+
+4. SEC-005 T5/T6 acceptance and capability certification
+   pending stage 3
+```
+
+The task boundary must separate the trusted provider control process from
+untrusted model-generated task execution so provider authentication/state and
+provider API connectivity do not imply task-shell network access. The concrete
+runtime mechanism must remain provider-neutral at the execution-plan/runtime
+boundary; do not introduce `provider == "cursor"` branching into generic runtime
+code.
+
+Every model-generated local command used by the supported Cursor workflow must
+cross the broker-controlled task boundary, or the unrestricted alternative must
+be unavailable. A separate worker is insufficient if Cursor can still execute an
+ordinary unrestricted shell path.
+
+Prefer a supported Cursor delegation/executor interface when one exists. Do not
+accept PATH wrappers, shell aliases, `LD_PRELOAD`, DNS-only controls, or an outer
+provider-wide `network=none` as the final SEC-005 boundary.
+
+Provider-native controls may implement or supplement the platform guarantee when
+the production-shaped task path behaviorally proves the common contract; they
+are not trusted merely because configuration was generated or requested.
 
 ### Tests
 
-- T1/T2 translation/reconciliation.
+- T1/T2 existing Cursor translation/reconciliation and fail-closed capability
+  gating.
+- T1/T2 provider-neutral task-boundary plan/runtime contract.
+- T2 prove generic runtime code contains no Cursor-specific execution branch.
 - T5 authenticated run.
 - T6 common egress contract.
 - T3.
 
 ### Acceptance
 
-Cursor hardened profiles pass the common egress contract.
+Cursor hardened profiles pass the common egress contract through an
+authoritative task-execution boundary while provider control-plane connectivity
+remains functional.
+
+Until that evidence exists:
+
+```text
+network_deny       not advertised
+network_allowlist  not advertised
+hardened           not advertised
+```
 
 ---
 

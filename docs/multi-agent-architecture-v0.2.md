@@ -1647,8 +1647,20 @@ MA2-SEC-006 T5/T6 proof passed the common task-egress contract for review,
 implement, and dependency profiles, including project-config widening, raw-IP,
 private/metadata, and redirect-to-denied bypass attempts.
 
-Cursor destination-level task egress remains open under MA2-SEC-007. Both
-providers remain `compatibility` security-class only; full `hardened`
+Cursor destination-level task egress remains open under MA2-SEC-007. Runtime
+characterization shows that Cursor's native Linux sandbox helper is viable in
+the executor, but the tested authenticated headless task path does not enter
+that sandbox and retains ordinary outer-executor network access. The
+provider-native headless path is therefore non-conformant for SEC-005 rather
+than an authoritative task-egress boundary.
+
+MA2-SEC-007 remains in progress and promotes a provider-neutral,
+broker/runtime-controlled task execution boundary into Phase 5. Provider-native
+controls remain valid enforcement components when the production-shaped task
+path behaviorally proves the common contract; requested or generated native
+state alone is not sufficient evidence.
+
+Both providers remain `compatibility` security-class only; full `hardened`
 advertising remains blocked until the evidence gate in MA2-SEC-008.
 
 Compatibility execution is now explicit at the run boundary. Legacy
@@ -1753,6 +1765,46 @@ profile. Provider adapters choose controlled test endpoints and execution
 mechanics; the common contract contains no provider CLI syntax, sandbox/runtime
 configuration, concrete hostname, URL, or IP address. `MA2-SEC-006` is
 certified for Codex; `MA2-SEC-007` must satisfy the same contract for Cursor.
+
+### Platform-controlled task execution boundary
+
+SEC-007 demonstrates that the current single-compartment provider executor is
+not sufficient for every reference-provider enforcement path:
+
+```text
+one outer executor / network namespace
+    trusted provider control process
+    provider-created model task processes
+```
+
+At that boundary, outer `network=none` would also remove required provider API
+connectivity, while an outer provider-domain allowlist would remain reachable by
+an unsandboxed task child. When provider-native task enforcement is
+non-conformant, the platform therefore needs a provider-neutral way to separate:
+
+```text
+trusted provider control compartment
+    provider API connectivity
+    provider authentication/state
+
+from
+
+untrusted task compartment
+    resolved workspace/filesystem policy
+    resolved task-shell network policy
+    no provider-auth visibility
+```
+
+This is an execution-plan/runtime concern rather than a provider-identity branch.
+Provider drivers may declare or construct a supported delegation mechanism, but
+generic runtime code must remain provider-neutral. Every supported model-
+generated local command must cross the authoritative task boundary, or an
+unrestricted alternate command path must be unavailable.
+
+Provider-native controls may remain an implementation of the platform guarantee
+when behavioral evidence certifies the production-shaped task path. If that
+evidence is absent, the broker/runtime-controlled boundary must supply the
+guarantee or the run fails closed.
 
 `MA2-SEC-001` establishes the common adversarial acceptance vocabulary before
 provider enforcement changes begin. The reusable contract defines observable
@@ -1959,10 +2011,10 @@ Preserve explicit compatibility functionality if operational evidence shows it r
 
 Evaluate whether the architecture requires another isolation layer.
 
-After real multi-agent project usage, reassess whether the following are justified:
+After real multi-agent project usage, reassess whether the following additional
+isolation or routing changes are justified:
 
 ```text
-separate provider control process / task runner
 common outer egress proxy
 VM-grade executor boundary
 remote execution backend
@@ -1972,6 +2024,10 @@ cloud agents
 ```
 
 None of these should be implemented solely because the new architecture makes them possible.
+
+A separate provider-control/task-execution boundary is no longer only a Phase 11
+candidate: SEC-007 supplies concrete Phase 5 evidence that such a boundary is
+required when a provider-native task path cannot enforce the platform contract.
 
 ---
 
@@ -1997,7 +2053,7 @@ The practical sequence is:
 13. add canonical policy serialization/hash                 [complete: MA2-POL-008]
 
 14. close credential confidentiality                         [complete: SEC-001/002/003]
-15. close task egress restriction                            [in progress: SEC-005/006 complete; SEC-007 next]
+15. close task egress restriction                            [in progress: SEC-005/006 complete; SEC-007 platform task boundary next]
 
 16. introduce Run records
 17. make agentctl registry-driven

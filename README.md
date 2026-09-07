@@ -113,7 +113,13 @@ authentication state is protected from sandboxed task-shell access by the
 broker-owned credential policy and the certified `provider_state_protection`
 capability. The provider process itself still requires access to its own
 authentication state. Destination-level Cursor task-shell network isolation is
-a separate capability and remains uncertified; see
+a separate capability and remains uncertified. Current SEC-007 characterization
+shows that Cursor's native sandbox helper can run in the project executor, but
+the tested authenticated headless `agent -p --sandbox enabled` task shell does
+not enter that native sandbox and retains ordinary outer-executor network
+access. The platform therefore treats the provider-native headless path as
+non-conformant for task-egress enforcement rather than deriving a security
+guarantee from requested or generated sandbox state; see
 [Known security limitations](#known-security-limitations).
 
 Provider defaults are deployed under `/srv/agent-dev/platform/seed`, but
@@ -123,8 +129,19 @@ authoritative `config.toml` mounted read-only. Cursor keeps its active
 file. The broker materializes the complete seed when the active Cursor config is
 missing and, on later provider use, reconciles the platform-managed
 `permissions` object and `sandbox.networkAccess` value while preserving other
-Cursor-managed fields. The outer Podman boundary remains authoritative for host
-access in both cases.
+Cursor-managed fields. These provider-native controls remain generated
+enforcement material rather than the source of platform security semantics. The
+outer Podman boundary remains authoritative for host access in both cases.
+
+For Cursor task-egress closure, the current single executor/network namespace
+cannot independently restrict an unsandboxed model-generated child while
+preserving required provider-control connectivity. MA2-SEC-007 therefore
+continues toward a broker/runtime-controlled task execution boundary that can
+enforce the resolved task policy independently of Cursor-native headless
+sandbox behavior. Provider-native controls may implement or supplement that
+guarantee only after the production-shaped task path passes behavioral
+acceptance. Until the common SEC-005 T5/T6 contract passes, Cursor does not
+advertise `network_deny`, `network_allowlist`, or `hardened`.
 
 ## Installation
 

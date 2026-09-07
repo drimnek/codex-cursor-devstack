@@ -3,7 +3,7 @@
 **Project:** `codex-cursor-devstack`
 **Requirement:** MA2-SEC-007 — Enforce Cursor Task-Shell Egress Policy
 **Date:** 2026-09-07
-**Status:** **BLOCKED — provider-native sandbox is available, but Cursor headless `agent -p --sandbox enabled` does not sandbox the task shell in the tested Linux executor environment**
+**Status:** **IN PROGRESS — provider-native headless enforcement is non-conformant; platform-controlled task-egress enforcement is required**
 
 **Related implementation:** MA2-SEC-007 in `multi-agent-v0.2-implementation-backlog.md`
 
@@ -35,9 +35,18 @@ Runtime characterization, however, isolates a provider/runtime blocker:
    - `2026.09.02-c22c1a3` — freshly installed comparison build.
 6. Explicit `--workspace /workspace`, persisted `sandbox.mode=enabled`, `sandbox.networkAccess=user_config_only`, an alternate writable `CURSOR_CONFIG_DIR`, and removal of project-policy widening from the baseline phase do not change the result.
 
-Therefore the current evidence does **not** support advertising Cursor `network_deny`, `network_allowlist`, or `hardened` capability support. MA2-SEC-007 must remain fail-closed.
+Therefore the current evidence does **not** support advertising Cursor
+`network_deny`, `network_allowlist`, or `hardened` capability support. The
+provider-native headless path is classified as non-conformant for SEC-005, and
+MA2-SEC-007 remains in progress under fail-closed capability semantics.
 
 The evidence localizes the problem to the Cursor headless task-shell sandbox activation boundary. It does not demonstrate a failure of Linux user namespaces, rootless Podman nesting, the direct native sandbox helper, or the broker's outer executor network.
+
+The architectural consequence is that Cursor's requested or generated native
+sandbox state cannot be treated as the authoritative SEC-005 boundary. The
+platform must preserve the provider-neutral task-egress contract independently
+of whether Cursor's native headless enforcement is correct. Provider-native
+controls remain useful defense in depth when runtime evidence proves them.
 
 ---
 
@@ -74,7 +83,7 @@ flowchart LR
         D1 --> D2 --> D3
     end
 
-    G["SEC-007 fail closed<br/>network_deny: disabled<br/>network_allowlist: disabled<br/>hardened: disabled"]
+    G["Provider-native path non-conformant<br/>SEC-007 continues with platform enforcement<br/>network capabilities remain disabled"]
 
     A --> E1
     A --> H1
@@ -645,18 +654,19 @@ network restriction PASS            public task egress reachable
           +---------------+--------------+
                           |
                           v
-              failure localized to the
-              headless task-shell
+              provider-native failure localized
+              to the headless task-shell
               sandbox activation boundary
                           |
                           v
-                 MA2-SEC-007 BLOCKED
+            platform-controlled enforcement
+                    required next
 ```
 
 Taken together, these tests justify treating the current issue as a
-**headless task-shell activation blocker**, not as evidence that Cursor's Linux
-native sandbox is generally unavailable and not merely as an isolated malformed
-destination-policy observation.
+**provider-native headless task-shell enforcement non-conformance**, not as
+evidence that Cursor's Linux native sandbox is generally unavailable and not
+merely as an isolated malformed destination-policy observation.
 
 ---
 
@@ -1076,7 +1086,13 @@ instead of misclassifying the first observed network leak as only a `sandbox.jso
 ### Current status
 
 ```text
-MA2-SEC-007: BLOCKED
+MA2-SEC-007: IN PROGRESS
+
+provider-native Cursor headless enforcement:
+    NON-CONFORMANT
+
+next enforcement boundary:
+    broker/runtime-controlled task execution
 ```
 
 ### Acceptance state
@@ -1096,9 +1112,11 @@ MA2-SEC-007: BLOCKED
 | SEC-005 implement contract | cannot certify |
 | SEC-005 dependency contract | cannot certify |
 | project widening resistance | not reached for certification |
-| `network_deny` advertising | blocked |
-| `network_allowlist` advertising | blocked |
-| hardened advertising | blocked |
+| provider-native headless egress enforcement | **non-conformant** |
+| broker/runtime task-egress enforcement | required / not yet implemented |
+| `network_deny` advertising | gated |
+| `network_allowlist` advertising | gated |
+| hardened advertising | gated |
 
 ---
 
@@ -1165,19 +1183,42 @@ headless:
 
 Only if the headless activation check passes should the full SEC-005 destination-level contract be rerun.
 
-### 12.6 Investigate a supported split task-shell interface if Cursor exposes one
+Future provider fixes may restore a provider-native enforcement path, but they
+are no longer the only route for MA2-SEC-007 progress.
 
-A valid alternative implementation would require a Cursor-supported mechanism where:
+### 12.6 Implement a broker-controlled task execution boundary
+
+The current outer Cursor executor contains both:
+
+```text
+provider control-plane traffic
+model-generated task traffic
+```
+
+in one network namespace. An outer `network=none` policy would therefore break
+Cursor control traffic, while an outer provider-domain allowlist would still be
+reachable by an unsandboxed child.
+
+MA2-SEC-007 must therefore introduce a provider-neutral execution-plane boundary
+that can enforce the resolved task policy independently of Cursor-native sandbox
+semantics.
+
+### 12.7 Prefer a supported split task-shell interface when available
+
+A preferred implementation uses a Cursor-supported mechanism where:
 
 ```text
 provider process
     -> retains provider API connectivity
 
 spawned shell process
-    -> runs through Cursor's native sandbox helper/policy
+    -> is delegated into an agentdev-controlled task compartment
 ```
 
-An externally imposed wrapper around the entire provider process is not equivalent.
+If Cursor later provides a supported native delegation or runner interface, it
+may be used to cross this boundary. An externally imposed wrapper around the
+entire provider process is not equivalent because it conflates provider-control
+and task networking.
 
 ---
 
@@ -1271,14 +1312,22 @@ Cursor direct native sandbox helper             PASS
 Cursor direct-helper network restriction        PASS
 Authenticated Cursor provider control path      PASS
 Cursor headless task-shell native activation    FAIL
-SEC-005 Cursor destination egress certification BLOCKED
+provider-native SEC-005 enforcement             NON-CONFORMANT
+platform-controlled SEC-005 enforcement         REQUIRED
 ```
 
-The current evidence does not justify additional speculative changes to broker policy translation or configuration paths.
+The current evidence does not justify additional speculative changes to Cursor
+policy translation or configuration paths.
 
-The next meaningful trigger for resuming MA2-SEC-007 certification is either:
+The next implementation step for MA2-SEC-007 is:
 
-1. a Cursor CLI release whose authenticated headless task shell proves native sandbox activation; or
-2. a supported Cursor execution interface that explicitly separates provider control-plane networking from sandboxed task-shell execution.
+1. define a provider-neutral broker/runtime-controlled task execution boundary;
+2. route Cursor model-generated shell execution through that boundary using a
+   complete, fail-closed delegation mechanism;
+3. rerun the SEC-005 common egress contract against the production-shaped path.
 
-Until then, the correct platform behavior is to retain compatibility-class Cursor execution and keep network/hardened capabilities evidence-gated.
+A future Cursor CLI release that correctly activates the native sandbox may
+provide an additional defense-in-depth or alternate certified enforcement path.
+Until either path passes the common contract, the correct platform behavior is
+to retain compatibility-class Cursor execution and keep network/hardened
+capabilities evidence-gated.
