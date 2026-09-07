@@ -88,12 +88,13 @@ class StatePolicyMount:
 
 @dataclass(frozen=True, slots=True)
 class JsonFieldReconciliation:
-    """Keep one JSON field platform-managed in a writable provider state file."""
+    """Keep JSON policy fields platform-managed in writable provider state."""
 
     volume_key: str
     seed_relative_path: str
     state_relative_path: str
     managed_field: str
+    managed_paths: tuple[tuple[str, ...], ...] = ()
 
     def __post_init__(self) -> None:
         _text(self.volume_key, "reconciliation volume key")
@@ -102,6 +103,19 @@ class JsonFieldReconciliation:
         _text(self.managed_field, "managed JSON field")
         if any(ch in self.managed_field for ch in ".[]'\""):
             raise ValueError("managed JSON field must be a simple object key")
+        if not isinstance(self.managed_paths, tuple):
+            raise ValueError("managed JSON paths must be a tuple")
+        for path in self.managed_paths:
+            if not isinstance(path, tuple) or not path:
+                raise ValueError("managed JSON path must be a non-empty tuple")
+            for field in path:
+                _text(field, "managed JSON path field")
+                if any(ch in field for ch in ".[]'\""):
+                    raise ValueError(
+                        "managed JSON path fields must be simple object keys"
+                    )
+        if len(self.managed_paths) != len(set(self.managed_paths)):
+            raise ValueError("managed JSON paths must be unique")
 
 
 @dataclass(frozen=True, slots=True)

@@ -266,6 +266,7 @@ def check_broker_plan_resolution() -> None:
             assert generated_policy.read_only
             generated_source = Path(generated_policy.source)
             assert generated_source.read_text(encoding="utf-8") == '{"mode":"workspace"}\n'
+            assert generated_source.stat().st_mode & 0o777 == 0o644
             assert generated_source.parent.name == "plan-test"
             assert generated_source.parent.parent.name == ".run-policy"
             assert generated_source.parent.parent.parent == tasks

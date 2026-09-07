@@ -285,7 +285,7 @@ def materialize_generated_policy_files(
                 handle.write(item.content)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.chmod(tmp_name, 0o600)
+            os.chmod(tmp_name, 0o644)
             os.replace(tmp_name, destination)
         except BaseException:
             try:
@@ -440,6 +440,16 @@ def seed_provider_home(cfg: dict, provider: str) -> None:
     seed_target = f"/seed/{plan.seed_relative_path}"
     state_target = f"/state/{plan.state_relative_path}"
     field = plan.managed_field
+    seed_validation = f'(.{field} | type) == "object"'
+    jq_updates = [f'.{field} = $seed[0].{field}']
+    for managed_path in plan.managed_paths:
+        jq_path = json.dumps(list(managed_path), separators=(",", ":"))
+        seed_validation += f" and (getpath({jq_path}) != null)"
+        jq_updates.append(
+            f"setpath({jq_path}; ($seed[0] | getpath({jq_path})))"
+        )
+    jq_program = " | ".join(jq_updates)
+
     argv = [
         "podman", "run", "--rm", "--network=none", "--http-proxy=false",
         "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
@@ -460,10 +470,10 @@ def seed_provider_home(cfg: dict, provider: str) -> None:
         'if [ ! -e "$state" ]; then '
         'install -m 0600 "$seed" "$state"; '
         "else "
-        f"jq -e '(.{field} | type) == \"object\"' \"$seed\" >/dev/null; "
+        f"jq -e {shlex.quote(seed_validation)} \"$seed\" >/dev/null; "
         f"tmp=$(mktemp /state/{PurePosixPath(plan.state_relative_path).name}.tmp.XXXXXX); "
         "trap 'rm -f \"$tmp\"' EXIT; "
-        f"jq --slurpfile seed \"$seed\" '.{field} = $seed[0].{field}' \"$state\" > \"$tmp\"; "
+        f"jq --slurpfile seed \"$seed\" {shlex.quote(jq_program)} \"$state\" > \"$tmp\"; "
         'chmod 0600 "$tmp"; '
         'mv -f "$tmp" "$state"; '
         "trap - EXIT; "

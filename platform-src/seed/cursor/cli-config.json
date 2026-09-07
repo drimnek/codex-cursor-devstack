@@ -4,6 +4,9 @@
     "vimMode": false
   },
   "approvalMode": "allowlist",
+  "sandbox": {
+    "networkAccess": "user_config_only"
+  },
   "permissions": {
     "allow": [
       "Read(**)",

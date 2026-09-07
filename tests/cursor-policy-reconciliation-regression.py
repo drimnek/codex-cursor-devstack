@@ -31,6 +31,9 @@ def capture_cursor_seed_script(module, root: Path) -> str:
                     "allow": ["Read(**)", "Write(**)", "Shell(git)"],
                     "deny": ["Shell(sudo)"],
                 },
+                "sandbox": {
+                    "networkAccess": "user_config_only",
+                },
             }
         )
         + "\n"
@@ -97,6 +100,11 @@ def main() -> None:
             "model": "cursor-managed-model",
             "customCursorField": {"preserve": True},
             "permissions": {"allow": ["Shell(ls)"], "deny": []},
+            "sandbox": {
+                "mode": "disabled",
+                "networkAccess": "user_config_with_defaults",
+                "cursorManaged": True,
+            },
         }
         stale_config.write_text(json.dumps(stale) + "\n")
         os.chmod(stale_config, 0o600)
@@ -106,6 +114,9 @@ def main() -> None:
         assert reconciled["permissions"] == seed["permissions"]
         assert reconciled["model"] == stale["model"]
         assert reconciled["customCursorField"] == stale["customCursorField"]
+        assert reconciled["sandbox"]["networkAccess"] == "user_config_only"
+        assert reconciled["sandbox"]["mode"] == "disabled"
+        assert reconciled["sandbox"]["cursorManaged"] is True
         assert stat.S_IMODE(stale_config.stat().st_mode) == 0o600
         assert not list(stale_config.parent.glob("cli-config.json.tmp.*"))
 

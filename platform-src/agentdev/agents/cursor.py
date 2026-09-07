@@ -140,6 +140,7 @@ class CursorDriver(AgentDriver):
                 seed_relative_path="cli-config.json",
                 state_relative_path="cli-config.json",
                 managed_field="permissions",
+                managed_paths=(("sandbox", "networkAccess"),),
             ),
         )
 
