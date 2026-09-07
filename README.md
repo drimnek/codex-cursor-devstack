@@ -103,13 +103,28 @@ Provider authentication/session state is stored in scoped rootless Podman volume
 
 ```text
 agent-dev-codex-state   -> /root/.codex
-agent-dev-cursor-state  -> /root/.cursor
-agent-dev-cursor-auth   -> /root/.config/cursor
+agent-dev-cursor-state  -> /home/node/.cursor
+agent-dev-cursor-auth   -> /home/node/.config/cursor
 ```
 
-The separate Cursor XDG authentication volume restores persistent CLI login state without making the whole provider home writable. This does **not** provide credential confidentiality from processes already executing inside the Cursor executor; credential isolation remains a separate hardening requirement.
+The separate Cursor XDG authentication volume restores persistent CLI login
+state without making the whole provider home writable. Cursor provider
+authentication state is protected from sandboxed task-shell access by the
+broker-owned credential policy and the certified `provider_state_protection`
+capability. The provider process itself still requires access to its own
+authentication state. Destination-level Cursor task-shell network isolation is
+a separate capability and remains uncertified; see
+[Known security limitations](#known-security-limitations).
 
-Provider defaults are deployed under `/srv/agent-dev/platform/seed`, but provider runtime configuration follows each CLI's requirements. Codex keeps its authoritative `config.toml` mounted read-only. Cursor keeps its active `cli-config.json` writable because the CLI performs atomic rewrites of that file. The broker materializes the complete seed when the active Cursor config is missing and, on later provider use, reconciles only the platform-managed `permissions` field from the deployed seed while preserving other Cursor-managed fields. The outer Podman boundary remains authoritative for host access in both cases.
+Provider defaults are deployed under `/srv/agent-dev/platform/seed`, but
+provider runtime configuration follows each CLI's requirements. Codex keeps its
+authoritative `config.toml` mounted read-only. Cursor keeps its active
+`cli-config.json` writable because the CLI performs atomic rewrites of that
+file. The broker materializes the complete seed when the active Cursor config is
+missing and, on later provider use, reconciles the platform-managed
+`permissions` object and `sandbox.networkAccess` value while preserving other
+Cursor-managed fields. The outer Podman boundary remains authoritative for host
+access in both cases.
 
 ## Installation
 
@@ -303,7 +318,66 @@ Codex task execution uses `codex exec` so broker-managed runs are non-interactiv
 
 `--outer-only` is Codex-only and disables the nested Codex OS sandbox; it does not grant additional host access beyond what the broker already exposes to the container. `--readonly --outer-only` is supported: the broker still mounts the task workspace read-only through Podman while Codex runs without the nested Linux sandbox. Anything else exposed inside the executor remains governed by the Podman/container policy rather than by Codex's inner sandbox.
 
-Codex keeps its active policy file mounted read-only. Cursor uses an explicit global CLI configuration with required schema fields and allowlist mode, but its active `cli-config.json` remains writable because Cursor manages that file itself. Before Cursor provider operations, the broker reconciles `permissions` from the deployed seed into the active config using an atomic replacement, preserving Cursor-managed fields outside `permissions`. This makes the deployed seed authoritative for platform policy without making the entire active Cursor config immutable. Auth/session state remains writable in provider-specific volumes.
+Codex keeps its active policy file mounted read-only. Cursor uses an explicit
+global CLI configuration, but its active `cli-config.json` remains writable
+because Cursor manages that file itself. Before Cursor provider operations, the
+broker reconciles the platform-managed `permissions` object and
+`sandbox.networkAccess` value from the deployed seed into the active config
+while preserving unrelated Cursor-managed fields. Broker-generated
+provider-policy artifacts remain separate from mutable provider state.
+Auth/session state remains writable in provider-specific volumes.
+
+## Known security limitations
+
+### Cursor task-shell network isolation
+
+Cursor task-shell destination-level egress is currently **not certified**.
+
+In the tested Linux executor environment, Cursor's direct native sandbox helper
+works and reports the native/bubblewrap sandbox backend, but authenticated
+headless `agent -p --sandbox enabled` task shells do not report native sandbox
+activation and retain public network access. The same headless behavior was
+observed with Cursor CLI `2026.08.11-e8db854` and `2026.09.02-c22c1a3`.
+
+The following Cursor capability claims therefore remain disabled:
+
+```text
+network_deny
+network_allowlist
+hardened
+```
+
+See
+[MA2-SEC-007 Cursor Headless Task-Shell Egress Characterization](docs/ma2-sec-007-cursor-headless-sandbox-characterization-report.md)
+for the high-level issue schematic, experiment matrix, evidence-producing
+tests, proof boundaries, and re-entry criteria.
+
+### Using Cursor while this limitation is open
+
+Do not rely on Cursor execution for a task whose security contract requires
+task-shell network denial or an explicit destination allowlist.
+
+Until MA2-SEC-007 is certified:
+
+- use a provider with the required certified network capability for
+  network-restricted execution;
+- use Cursor only when unrestricted task-shell network access is acceptable for
+  the selected execution path;
+- do not treat `--sandbox enabled`, generated `sandbox.json`, or
+  `sandbox.networkAccess=user_config_only` as proof that the headless task shell
+  is network-isolated;
+- do not wrap the complete Cursor provider process in `agent sandbox run` as a
+  workaround, because provider control-plane connectivity and task-shell
+  connectivity must remain separate.
+
+Existing `agentctl run cursor ...` examples in this README describe workflow
+usage and must not be interpreted as proof of destination-level task-shell
+network isolation.
+
+The current README guidance is intentionally conservative. It does not claim
+that `agentctl` rejects all Cursor network-restricted policies until the
+corresponding fail-closed admission-control behavior is implemented and covered
+by regression tests.
 
 ## Validation
 
@@ -406,8 +480,8 @@ When these checks pass, the sequential pre-pilot acceptance stage is complete; t
 - GitNexus is optional and not injected as an MCP dependency into the core executor images.
 - Cursor CLI installation is frozen at image build time but is not yet pinned by a vendor-provided immutable installer artifact in this stack.
 - `--outer-only` intentionally disables Codex's inner OS sandbox and relies on broker-generated Podman isolation; resources exposed inside that executor are not additionally restricted by the Codex sandbox.
-- Provider credentials remain readable by processes inside the corresponding executor; scoped state volumes prevent whole-home persistence but do not yet provide task-level credential confidentiality.
-- Provider task networking currently controls the outer network mode and blocks host loopback where configured, but does not yet enforce destination-level outbound allowlists; destination egress restriction remains open hardening work.
+- Provider authentication state remains available to the provider process itself. Cursor task-shell access to provider authentication state is covered by the certified `provider_state_protection` capability.
+- Cursor destination-level task-shell egress remains uncertified because the tested authenticated headless path does not prove native sandbox activation; see the MA2-SEC-007 characterization report above.
 
 ## Scope discipline
 
